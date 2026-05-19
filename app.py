@@ -24,6 +24,9 @@ from core import (
     check_dividend_threshold,
     simulate_corporate_loss_carryforward,
     get_filing_period_info,
+    fetch_all_prices,
+    isin_to_ticker,
+    ISIN_TO_TICKER,
 )
 
 st.set_page_config(
@@ -228,7 +231,106 @@ with tab_tax:
     
     st.divider()
     st.markdown("### 📥 보유 종목 현재가 입력")
-    st.caption("미실현 손익 계산용. 두 가지 방법 중 선택")
+    st.caption("미실현 손익 계산용. 자동 조회 또는 직접 입력")
+    
+    # ── 🔄 자동 현재가 조회 (핵심 신규 기능) ──
+    st.markdown("#### 🔄 자동 조회")
+    
+    auto_col1, auto_col2 = st.columns([2, 1])
+    with auto_col1:
+        st.caption("• 한국주식·ETF: pykrx (한국거래소 공식 데이터)  ·  해외주식: yfinance (Yahoo Finance)")
+        st.caption("• 무료 / 인증 불필요 / 최근 영업일 종가 기준")
+    with auto_col2:
+        auto_fetch = st.button("🔄 모든 종목 현재가 자동 조회", 
+                               type="primary", use_container_width=True,
+                               disabled=holdings_df.empty)
+    
+    if auto_fetch:
+        # ISIN → 티커 사용자 매핑 (세션 저장)
+        if 'user_ticker_map' not in st.session_state:
+            st.session_state.user_ticker_map = {}
+        
+        progress = st.progress(0)
+        status = st.empty()
+        
+        def cb(idx, total, name):
+            progress.progress(min((idx+1)/total, 1.0))
+            status.caption(f"⏳ {idx+1}/{total} 조회 중: {name[:30]}")
+        
+        with st.spinner("실시간 현재가 가져오는 중..."):
+            try:
+                prices, failed = fetch_all_prices(
+                    holdings_df, 
+                    user_mapping=st.session_state.user_ticker_map,
+                    progress_callback=cb,
+                )
+                # 세션에 반영
+                for key, price in prices.items():
+                    st.session_state.current_prices[key] = price
+                
+                progress.empty()
+                status.empty()
+                
+                if prices:
+                    st.success(f"✅ {len(prices)}개 종목 현재가 자동 조회 완료!")
+                if failed:
+                    with st.expander(f"⚠️ {len(failed)}개 종목 조회 실패 (수동 매핑 또는 직접 입력 필요)", expanded=True):
+                        failed_df = pd.DataFrame(failed)
+                        st.dataframe(failed_df, hide_index=True, use_container_width=True)
+                        st.caption("💡 해외주식의 경우 종목코드(ISIN)→Yahoo 티커 매핑이 필요합니다. 아래에서 수동 매핑하거나 표에서 직접 가격 입력하세요.")
+            except ImportError as e:
+                progress.empty()
+                status.empty()
+                st.error(f"❌ 필요한 라이브러리가 설치되지 않았습니다: {e}")
+                st.code("pip install pykrx yfinance", language="bash")
+            except Exception as e:
+                progress.empty()
+                status.empty()
+                st.error(f"❌ 조회 중 오류: {e}")
+    
+    # 해외주식 ISIN → 티커 수동 매핑
+    overseas_holdings = holdings_df[holdings_df['통화'] != 'KRW'] if not holdings_df.empty else holdings_df
+    if not overseas_holdings.empty:
+        with st.expander("🔧 해외주식 티커 매핑 (ISIN → Yahoo 티커)", expanded=False):
+            st.caption("ISIN 코드를 Yahoo Finance 티커로 매핑합니다. 한 번 매핑하면 다음부터 자동 조회됩니다.")
+            
+            if 'user_ticker_map' not in st.session_state:
+                st.session_state.user_ticker_map = {}
+            
+            mapping_df = overseas_holdings[['종목명', '종목코드', '통화']].copy()
+            mapping_df['Yahoo 티커'] = ''
+            for idx, row in mapping_df.iterrows():
+                isin = row['종목코드']
+                # 사용자 매핑 우선, 그 다음 내장 매핑
+                if isin in st.session_state.user_ticker_map:
+                    mapping_df.at[idx, 'Yahoo 티커'] = st.session_state.user_ticker_map[isin]
+                elif isin in ISIN_TO_TICKER:
+                    mapping_df.at[idx, 'Yahoo 티커'] = ISIN_TO_TICKER[isin]
+            
+            edited_map = st.data_editor(
+                mapping_df,
+                column_config={
+                    '종목명': st.column_config.TextColumn(disabled=True),
+                    '종목코드': st.column_config.TextColumn('ISIN', disabled=True),
+                    '통화': st.column_config.TextColumn(disabled=True),
+                    'Yahoo 티커': st.column_config.TextColumn(
+                        '✏️ Yahoo 티커',
+                        help="예: NVDA, TSLA, 6758.T (일본), 0700.HK (홍콩), 600519.SS (중국 상해)"
+                    ),
+                },
+                hide_index=True, use_container_width=True, num_rows="fixed",
+                key="ticker_map_editor",
+            )
+            
+            # 매핑 저장
+            for _, row in edited_map.iterrows():
+                if row['Yahoo 티커'] and row['Yahoo 티커'].strip():
+                    st.session_state.user_ticker_map[row['종목코드']] = row['Yahoo 티커'].strip()
+            
+            st.caption(f"💾 현재 사용자 매핑: {len(st.session_state.user_ticker_map)}개 종목")
+    
+    st.divider()
+    st.markdown("#### ✏️ 또는 수동 입력 (백업 / 보정)")
     
     col_a, col_b = st.columns(2)
     with col_a:
