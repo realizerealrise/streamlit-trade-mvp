@@ -593,10 +593,10 @@ with tab6:
                 )
     with col2:
         st.markdown("#### 🏛 홈택스 양식")
-        st.button("⬇️ 다음 업데이트 예정", disabled=True, use_container_width=True)
+        st.button("⬇️ 홈택스 양식 (개발 예정)", disabled=True, use_container_width=True, key="dl_hometax")
     with col3:
         st.markdown("#### 📄 PDF 신고 자료")
-        st.button("⬇️ 다음 업데이트 예정", disabled=True, use_container_width=True)
+        st.button("⬇️ PDF 신고서 (개발 예정)", disabled=True, use_container_width=True, key="dl_pdf")
 
 
 st.divider()
