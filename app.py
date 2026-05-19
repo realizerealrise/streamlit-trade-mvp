@@ -293,19 +293,28 @@ with tab_tax:
     if not overseas_holdings.empty:
         with st.expander("🔧 해외주식 티커 매핑 (ISIN → Yahoo 티커)", expanded=False):
             st.caption("ISIN 코드를 Yahoo Finance 티커로 매핑합니다. 한 번 매핑하면 다음부터 자동 조회됩니다.")
+            st.caption("💡 티커를 모르겠으면 종목명을 [Yahoo Finance](https://finance.yahoo.com)에서 검색하세요.")
             
             if 'user_ticker_map' not in st.session_state:
                 st.session_state.user_ticker_map = {}
             
             mapping_df = overseas_holdings[['종목명', '종목코드', '통화']].copy()
-            mapping_df['Yahoo 티커'] = ''
+            mapping_df['추정 티커'] = ''
+            mapping_df['Yahoo 검색'] = ''
+            
             for idx, row in mapping_df.iterrows():
                 isin = row['종목코드']
-                # 사용자 매핑 우선, 그 다음 내장 매핑
-                if isin in st.session_state.user_ticker_map:
-                    mapping_df.at[idx, 'Yahoo 티커'] = st.session_state.user_ticker_map[isin]
-                elif isin in ISIN_TO_TICKER:
-                    mapping_df.at[idx, 'Yahoo 티커'] = ISIN_TO_TICKER[isin]
+                name = row['종목명']
+                # 자동 추정 (ISIN 매핑 + 종목명 키워드)
+                from core import isin_to_ticker as _isin_to_ticker
+                guessed = _isin_to_ticker(
+                    isin, name,
+                    user_mapping=st.session_state.user_ticker_map
+                )
+                mapping_df.at[idx, '추정 티커'] = guessed or ''
+                # Yahoo Finance 검색 URL
+                search_query = name.replace(' ', '+')
+                mapping_df.at[idx, 'Yahoo 검색'] = f"https://finance.yahoo.com/lookup?s={search_query}"
             
             edited_map = st.data_editor(
                 mapping_df,
@@ -313,9 +322,14 @@ with tab_tax:
                     '종목명': st.column_config.TextColumn(disabled=True),
                     '종목코드': st.column_config.TextColumn('ISIN', disabled=True),
                     '통화': st.column_config.TextColumn(disabled=True),
-                    'Yahoo 티커': st.column_config.TextColumn(
+                    '추정 티커': st.column_config.TextColumn(
                         '✏️ Yahoo 티커',
-                        help="예: NVDA, TSLA, 6758.T (일본), 0700.HK (홍콩), 600519.SS (중국 상해)"
+                        help="자동 추정된 값. 틀리면 수정하세요. (예: NVDA, TSLA, 6758.T 일본, 0700.HK 홍콩)"
+                    ),
+                    'Yahoo 검색': st.column_config.LinkColumn(
+                        '🔍 Yahoo 검색',
+                        display_text="검색하기",
+                        help="이 종목을 Yahoo Finance에서 검색"
                     ),
                 },
                 hide_index=True, use_container_width=True, num_rows="fixed",
@@ -324,10 +338,10 @@ with tab_tax:
             
             # 매핑 저장
             for _, row in edited_map.iterrows():
-                if row['Yahoo 티커'] and row['Yahoo 티커'].strip():
-                    st.session_state.user_ticker_map[row['종목코드']] = row['Yahoo 티커'].strip()
+                if row['추정 티커'] and row['추정 티커'].strip():
+                    st.session_state.user_ticker_map[row['종목코드']] = row['추정 티커'].strip()
             
-            st.caption(f"💾 현재 사용자 매핑: {len(st.session_state.user_ticker_map)}개 종목")
+            st.caption(f"💾 현재 사용자 매핑: {len(st.session_state.user_ticker_map)}개 종목 저장됨")
     
     st.divider()
     st.markdown("#### ✏️ 또는 수동 입력 (백업 / 보정)")

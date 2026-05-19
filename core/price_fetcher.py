@@ -12,9 +12,10 @@ import re
 from datetime import datetime, timedelta
 
 
-# ISIN → Yahoo 티커 매핑 (자주 거래되는 미국 종목들 사전 등록)
+# ISIN → Yahoo 티커 매핑 (자주 거래되는 종목들 사전 등록)
 # 키는 ISIN, 값은 Yahoo 티커
 ISIN_TO_TICKER = {
+    # 빅테크 (확실)
     'US67066G1040': 'NVDA',         # 엔비디아
     'US88160R1014': 'TSLA',         # 테슬라
     'US0378331005': 'AAPL',         # 애플
@@ -23,20 +24,79 @@ ISIN_TO_TICKER = {
     'US02079K1079': 'GOOG',         # 알파벳 C
     'US0231351067': 'AMZN',         # 아마존
     'US30303M1027': 'META',         # 메타
+    'US64110L1061': 'NFLX',         # 넷플릭스
+    
+    # ETF (확실)
     'US9229083632': 'VOO',          # 뱅가드 S&P500
     'US78462F1030': 'SPY',          # SPDR S&P500
     'US46090E1038': 'QQQ',          # Invesco QQQ
     'US8085247976': 'SCHD',         # 슈왑 배당
     'US46434V6312': 'IWM',          # iShares Russell 2000
     'US9220428588': 'VTI',          # 뱅가드 토탈
+    
+    # 기타 미국 (확실)
     'US19260Q1076': 'COIN',         # 코인베이스
     'US3024913036': 'FCX',          # 프리포트
     'US98138H1014': 'WMT',          # 월마트
-    # 사장님 보유 종목들 (ISIN 기반 추정)
-    'US38747R3637': 'CONI',         # 그래닛셰어즈 코인베이스 인버스 ETF
-    'US46152A4528': 'NUKZ',         # Tradr 뉴스케일 (실제 티커는 다를 수 있음)
-    'US26923Q5642': 'MSTU',         # T-REX 비트마인
-    'US46092D3843': 'TSDD',         # TRADR 테슬라 2배 인버스
+    
+    # 사장님 PDF 종목들 (✅ = yfinance 확실, ⚠️ = 티커 추정)
+    'US97785W1062': 'WOLF',         # ✅ 울프스피드
+    'US23804L1035': 'DDOG',         # ✅ 데이터독
+    'US7731211089': 'RKLB',         # ✅ 로켓 랩
+    'US76029N1063': 'REPL',         # ✅ 레플리뮨 그룹
+    'US72703X1063': 'PL',           # ✅ 플래닛 랩스
+    'NL0009805522': 'NBIS',         # ✅ 네비우스 그룹 (네덜란드)
+    'US34631F1021': 'FPTC',         # ⚠️ 포전트 파워 솔루션즈 (확인 필요)
+    'IL0012384504': 'HUB',          # ⚠️ 허브 사이버 시큐리티
+    
+    # 레버리지 ETF (⚠️ 티커가 자주 변경되므로 사용자 확인 필요)
+    'US38747R3637': 'CONI',         # ⚠️ 그래닛셰어즈 코인베이스 인버스 ETF
+    'US46152A4528': 'NUKZ',         # ⚠️ Tradr 뉴스케일 2배 ETF
+    'US46152A4940': 'IRNX',         # ⚠️ TRADR 아이렌 2배 ETF
+    'US26923Q5642': 'MSTU',         # ⚠️ T-REX 비트마인
+    'US46092D3843': 'TSDD',         # ⚠️ TRADR 테슬라 2배 인버스
+    'US46092D6739': 'NBSX',         # ⚠️ TRADR 네비우스 그룹 2배 ETF
+    'US25461H7961': 'ORCX',         # ⚠️ 디렉시온 데일리 오라클 불 2배 ETF
+    'US88636J2612': 'LLYX',         # ⚠️ 디파이언스 일라이 릴리 2배 ETF
+    'US88636R2224': 'RKLX',         # ⚠️ 디파이언스 로켓 랩 2배 ETF
+}
+
+
+# 종목명 키워드 → Yahoo 티커 (ISIN 매핑이 없을 때 fallback)
+# 종목명에 키워드가 포함되면 해당 티커로 시도
+NAME_TO_TICKER = {
+    # 빅테크
+    '엔비디아': 'NVDA',
+    '테슬라': 'TSLA',
+    '애플': 'AAPL',
+    '마이크로소프트': 'MSFT',
+    '알파벳': 'GOOGL',
+    '구글': 'GOOGL',
+    '아마존': 'AMZN',
+    '메타': 'META',
+    '넷플릭스': 'NFLX',
+    '브로드컴': 'AVGO',
+    'AMD': 'AMD',
+    '인텔': 'INTC',
+    '퀄컴': 'QCOM',
+    
+    # 사장님 종목 (종목명 매칭)
+    '울프스피드': 'WOLF',
+    '데이터독': 'DDOG',
+    '로켓 랩': 'RKLB',
+    '로켓랩': 'RKLB',
+    '레플리뮨': 'REPL',
+    '플래닛 랩스': 'PL',
+    '플래닛랩스': 'PL',
+    '네비우스 그룹': 'NBIS',
+    '네비우스그룹': 'NBIS',
+    '포전트 파워': 'FPTC',
+    '포전트파워': 'FPTC',
+    '허브 사이버': 'HUB',
+    
+    # 한국 ETF (해외 상장)
+    '뱅가드': 'VOO',
+    '슈왑': 'SCHD',
 }
 
 
@@ -52,16 +112,21 @@ def isin_to_ticker(isin, stock_name='', user_mapping=None):
     Returns:
         str: Yahoo 티커 (예: NVDA) 또는 None
     """
-    # 1. 사용자 매핑 우선
+    # 1. 사용자 매핑 우선 (가장 정확)
     if user_mapping and isin in user_mapping:
         return user_mapping[isin]
     
-    # 2. 내장 매핑
+    # 2. 내장 ISIN 매핑
     if isin in ISIN_TO_TICKER:
         return ISIN_TO_TICKER[isin]
     
-    # 3. 종목명에서 추정 (간단한 케이스)
-    # 영문 단축명 패턴: "ETF 회사명 종목명" 같은 경우
+    # 3. 종목명에서 키워드 매칭 (fallback)
+    if stock_name:
+        name_lower = stock_name.lower().strip()
+        for keyword, ticker in NAME_TO_TICKER.items():
+            if keyword.lower() in name_lower:
+                return ticker
+    
     return None
 
 
