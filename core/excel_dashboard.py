@@ -150,9 +150,9 @@ def _build_dashboard_sheet(ws, pnl_df, holdings_df, year, stock_sheet_map):
     """대시보드 시트 빌드 — 사장님 양식 재현"""
     ws.sheet_view.showGridLines = False
     
-    # 열 너비
-    col_widths = {'A': 1, 'B': 30, 'C': 22, 'D': 18, 'E': 18, 'F': 18, 'G': 14, 'H': 2,
-                  'I': 28, 'J': 18, 'K': 18, 'L': 18}
+    # 열 너비 — 사장님 원본 양식 기준으로 충분히 넓게
+    col_widths = {'A': 2, 'B': 8, 'C': 32, 'D': 6, 'E': 18, 'F': 18, 'G': 14, 'H': 3,
+                  'I': 26, 'J': 16, 'K': 18, 'L': 18}
     for col, w in col_widths.items():
         ws.column_dimensions[col].width = w
     
@@ -165,7 +165,7 @@ def _build_dashboard_sheet(ws, pnl_df, holdings_df, year, stock_sheet_map):
     ws['B1'].font = FONT_TITLE
     ws.merge_cells('B1:G1')
     
-    ws['B2'] = f'분석 기준: {datetime.now().strftime("%Y-%m-%d")}  ·  토스 / 한투 / 나무 통합'
+    ws['B2'] = f'분석 기준: {datetime.now().strftime("%Y-%m-%d")}  ·  토스 / 한투 / 나무 / 삼성 통합'
     ws['B2'].font = FONT_SUBTITLE
     ws.merge_cells('B2:G2')
     
@@ -333,7 +333,25 @@ def _write_top_bottom_section(ws, start_row, pnl_df, pnl_sheet, last_row, stock_
     if df.empty:
         return
     
-    df['_수익률'] = df['처분손익(원)'] / df['총매수(원)'].replace(0, 1)
+    # 매수금액 표시용: 
+    # 1순위: 실제 총매수(원)가 있으면 그대로
+    # 2순위: 매도원가(원)가 있으면 그것 (전기 이월 종목)
+    # 그 외: 매수원가 정보 없음 (전기 이월 종목으로 추정)
+    def estimate_buy(r):
+        if r['총매수(원)'] > 0:
+            return r['총매수(원)']
+        cost = r.get('매도원가(원)', 0)
+        if cost > 0:
+            return cost
+        return 0  # 매수원가 정보 없음
+    
+    df['_표시매수액'] = df.apply(estimate_buy, axis=1)
+    
+    # 수익률: 매수원가 있는 종목만 계산
+    df['_수익률'] = df.apply(
+        lambda r: r['처분손익(원)'] / r['_표시매수액'] if r['_표시매수액'] > 0 else 0,
+        axis=1
+    )
     
     if by == '실현금액':
         df = df.sort_values('처분손익(원)', ascending=not top)
@@ -362,21 +380,32 @@ def _write_top_bottom_section(ws, start_row, pnl_df, pnl_sheet, last_row, stock_
         ws[f'C{r}'].border = BORDER_ALL
         ws.merge_cells(f'C{r}:D{r}')
         
-        ws[f'E{r}'] = row['총매수(원)']
-        ws[f'F{r}'] = row['처분손익(원)']
-        ws[f'G{r}'] = f"=IFERROR(F{r}/E{r},0)"
-        for letter in ['E', 'F']:
-            ws[f'{letter}{r}'].font = FONT_BODY
-            ws[f'{letter}{r}'].alignment = ALIGN_RIGHT
-            ws[f'{letter}{r}'].number_format = FMT_KRW
-            ws[f'{letter}{r}'].border = BORDER_ALL
+        # 매수금액 (0이면 "—" 표시 - 전기 이월 종목)
+        buy_amount = float(row['_표시매수액'])
+        if buy_amount > 0:
+            ws[f'E{r}'] = buy_amount
+            ws[f'E{r}'].number_format = FMT_KRW
+            ws[f'G{r}'] = f"=IFERROR(F{r}/E{r},0)"
+            ws[f'G{r}'].number_format = FMT_PCT
+        else:
+            ws[f'E{r}'] = '— (전기 이월)'
+            ws[f'E{r}'].alignment = ALIGN_CENTER
+            ws[f'G{r}'] = '—'
+            ws[f'G{r}'].alignment = ALIGN_CENTER
+        ws[f'F{r}'] = float(row['처분손익(원)'])
+        ws[f'F{r}'].font = FONT_BODY
+        ws[f'F{r}'].alignment = ALIGN_RIGHT
+        ws[f'F{r}'].number_format = FMT_KRW
+        ws[f'F{r}'].border = BORDER_ALL
+        ws[f'E{r}'].font = FONT_BODY
+        if buy_amount > 0:
+            ws[f'E{r}'].alignment = ALIGN_RIGHT
+        ws[f'E{r}'].border = BORDER_ALL
         ws[f'G{r}'].font = FONT_BODY_BOLD
-        ws[f'G{r}'].alignment = ALIGN_RIGHT
-        ws[f'G{r}'].number_format = FMT_PCT
         ws[f'G{r}'].border = BORDER_ALL
         
         # 행 높이 (긴 종목명 대응)
-        ws.row_dimensions[r].height = 22
+        ws.row_dimensions[r].height = 28
 
 
 def _write_country_table(ws, start_row, start_col, pnl_sheet, last_row):
@@ -456,8 +485,8 @@ def _build_stock_pnl_sheet(ws, pnl_df, holdings_df, stock_sheet_map, trades=None
                 fee_map[name]['수수료'] += float(t.get('수수료(원)', 0) or 0)
                 fee_map[name]['거래세'] += float(t.get('세금(원)', 0) or 0)
     
-    # 열 너비
-    widths = {'A': 6, 'B': 28, 'C': 8, 'D': 10, 'E': 16, 'F': 12, 'G': 14, 'H': 16,
+    # 열 너비 — 종목명은 넓게
+    widths = {'A': 6, 'B': 35, 'C': 8, 'D': 10, 'E': 16, 'F': 12, 'G': 14, 'H': 16,
               'I': 12, 'J': 16, 'K': 14, 'L': 14, 'M': 12, 'N': 16, 'O': 12, 'P': 12}
     for col, w in widths.items():
         ws.column_dimensions[col].width = w
@@ -551,7 +580,7 @@ def _build_stock_pnl_sheet(ws, pnl_df, holdings_df, stock_sheet_map, trades=None
                 cell.alignment = ALIGN_CENTER
                 cell.font = FONT_BODY
             elif col_idx == 2:
-                cell.alignment = ALIGN_LEFT
+                cell.alignment = ALIGN_WRAP  # 종목명: 줄바꿈 적용
             elif col_idx in (3, 4):
                 cell.alignment = ALIGN_CENTER
                 cell.font = FONT_BODY
@@ -563,7 +592,7 @@ def _build_stock_pnl_sheet(ws, pnl_df, holdings_df, stock_sheet_map, trades=None
                 else:
                     cell.number_format = FMT_KRW
         
-        ws.row_dimensions[r].height = 18
+        ws.row_dimensions[r].height = 24  # 긴 종목명 대응
     
     # 합계 행
     total_r = len(pnl_df) + 4
