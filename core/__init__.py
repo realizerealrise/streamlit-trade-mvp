@@ -1,5 +1,7 @@
 from .calculator import (
     calculate_stock_pnl,
+    calculate_stock_pnl_moving_avg,
+    compare_tax_methods,
     calculate_dividend,
     calculate_tax,
     get_monthly_trends,
@@ -23,6 +25,8 @@ from .excel_dashboard import build_dashboard_workbook
 
 __all__ = [
     'calculate_stock_pnl',
+    'calculate_stock_pnl_moving_avg',
+    'compare_tax_methods',
     'calculate_dividend',
     'calculate_tax',
     'get_monthly_trends',

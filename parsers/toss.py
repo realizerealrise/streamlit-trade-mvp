@@ -99,23 +99,30 @@ def parse_toss_pdf(file_obj):
         
         nums_part = rest[rate_match.start():].strip()
         nums = nums_part.replace(',', '').split()
-        dollar_nums = re.findall(r'\$\s*(-?\d+\.?\d*)', line2)
+        # 달러 숫자 파싱: 콤마 포함 큰 숫자도 지원 ($1,093.1184 같은 경우)
+        dollar_nums_raw = re.findall(r'\$\s*(-?[\d,]+\.?\d*)', line2)
+        dollar_nums = [float(s.replace(',', '')) for s in dollar_nums_raw]
         
         # 통합 양식으로 변환
         action_unified = '매수' if action == '구매' else '매도'
         
         # 양식별 인덱스 매핑
-        # nums 배열 구조:
+        # nums 배열 구조 (원화):
         #   옛 양식: [환율, 거래수량, 거래대금, 단가, 수수료, 거래세, 제세금, ...]
         #   새 양식: [환율, 거래수량, 거래대금, 정산금액, 단가, 수수료, 거래세, 제세금, ...]
+        # dollar_nums 배열 구조 (달러):
+        #   옛 양식: [거래대금, 단가, 수수료, 거래세, ...]
+        #   새 양식: [거래대금, 정산금액, 단가, 수수료, 거래세, ...]
         if has_settlement_col:
             # 새 양식: 정산금액 컬럼 한 칸씩 밀림
-            idx_fee = 5    # 수수료
-            idx_tax = 6    # 거래세
+            idx_fee = 5    # 원화 수수료
+            idx_tax = 6    # 원화 거래세
+            idx_dollar_price = 2  # 달러 단가
         else:
             # 옛 양식
             idx_fee = 4
             idx_tax = 5
+            idx_dollar_price = 1
         
         parsed.append({
             '거래일자': date.replace('.', '-'),
@@ -126,8 +133,8 @@ def parse_toss_pdf(file_obj):
             '종목명': stock_name,
             '종목코드': isin,
             '수량': float(nums[1]) if len(nums) > 1 else 0,
-            '단가': float(dollar_nums[1]) if len(dollar_nums) > 1 else 0,
-            '거래금액': float(dollar_nums[0]) if len(dollar_nums) > 0 else 0,
+            '단가': dollar_nums[idx_dollar_price] if len(dollar_nums) > idx_dollar_price else 0,
+            '거래금액': dollar_nums[0] if len(dollar_nums) > 0 else 0,
             '환율': float(nums[0]) if len(nums) > 0 else 0,
             '원화환산금액': float(nums[2]) if len(nums) > 2 else 0,
             '수수료(원)': float(nums[idx_fee]) if len(nums) > idx_fee else 0,

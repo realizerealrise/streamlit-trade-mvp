@@ -14,6 +14,8 @@ import io
 from parsers import parse_toss_pdf, parse_nh_xls, parse_kis_xls, parse_samsung_xlsx
 from core import (
     calculate_stock_pnl,
+    calculate_stock_pnl_moving_avg,
+    compare_tax_methods,
     calculate_dividend,
     calculate_tax,
     get_monthly_trends,
@@ -633,6 +635,122 @@ with tab_tax:
                         gain_rec.style.format({'평가손익(원)': '₩{:+,.0f}'}),
                         hide_index=True, use_container_width=True,
                     )
+            
+            # ─────────────────────────────────────────
+            # 🪜 Step 4. 계산 방법 비교 — 총평균법 vs 이동평균법
+            # ─────────────────────────────────────────
+            if user_type == '개인':
+                st.markdown("---")
+                st.markdown("##### `Step 4 · 계산 방법 비교`")
+                st.markdown("### ⚖️ 총평균법 vs 이동평균법")
+                st.caption(
+                    "국세청 해외주식 양도소득세 신고 시 **두 가지 계산 방법** 중 자유 선택 가능합니다. "
+                    "같은 거래라도 방법에 따라 세금이 달라질 수 있어요."
+                )
+                
+                with st.spinner("두 가지 방법 계산 중..."):
+                    comparison = compare_tax_methods(all_trades, user_type=user_type, loss_carryforward=loss_carryforward)
+                
+                tax_avg = comparison['총평균법']['tax_info']
+                tax_mov = comparison['이동평균법']['tax_info']
+                recommended = comparison['추천']
+                saving = comparison['절세효과']
+                
+                # 두 방법 비교 카드
+                col_a, col_b = st.columns(2)
+                
+                with col_a:
+                    is_recommended = (recommended == '총평균법')
+                    border_color = '#3B6D11' if is_recommended else '#CCCCCC'
+                    bg_color = '#EAF3DE' if is_recommended else '#FAFAFA'
+                    badge = ('<span style="position:absolute; top:-12px; right:12px; background:#3B6D11; '
+                            'color:white; font-size:11px; padding:3px 10px; border-radius:6px; font-weight:500;">🏆 유리한 선택</span>') if is_recommended else ''
+                    
+                    st.markdown(f"""
+                    <div style="background:{bg_color}; border:2px solid {border_color}; border-radius:12px; padding:16px 20px; position:relative; margin-top:12px;">
+                      {badge}
+                      <div style="font-size:14px; font-weight:500; margin-bottom:8px;">📊 총평균법</div>
+                      <div style="font-size:11px; color:#666; margin-bottom:12px;">연간 전체 매수의 평균단가로 산정</div>
+                      <table style="width:100%; font-size:12px;">
+                        <tr><td style="color:#666; padding:3px 0;">처분이익</td><td style="text-align:right;">₩{tax_avg['처분이익']:+,.0f}</td></tr>
+                        <tr><td style="color:#666; padding:3px 0;">처분손실</td><td style="text-align:right;">₩{tax_avg['처분손실']:+,.0f}</td></tr>
+                        <tr><td style="color:#666; padding:3px 0;">순처분손익</td><td style="text-align:right;">₩{tax_avg['순처분손익']:+,.0f}</td></tr>
+                        <tr><td style="color:#666; padding:3px 0;">과세표준</td><td style="text-align:right;">₩{tax_avg['과세표준']:+,.0f}</td></tr>
+                        <tr style="border-top:0.5px solid #ccc;"><td style="padding:6px 0 0; font-weight:500;">예상 세금</td><td style="text-align:right; padding:6px 0 0; font-weight:500; font-size:14px;">₩{tax_avg['예상세액']:,}</td></tr>
+                      </table>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col_b:
+                    is_recommended = (recommended == '이동평균법')
+                    border_color = '#3B6D11' if is_recommended else '#CCCCCC'
+                    bg_color = '#EAF3DE' if is_recommended else '#FAFAFA'
+                    badge = ('<span style="position:absolute; top:-12px; right:12px; background:#3B6D11; '
+                            'color:white; font-size:11px; padding:3px 10px; border-radius:6px; font-weight:500;">🏆 유리한 선택</span>') if is_recommended else ''
+                    
+                    st.markdown(f"""
+                    <div style="background:{bg_color}; border:2px solid {border_color}; border-radius:12px; padding:16px 20px; position:relative; margin-top:12px;">
+                      {badge}
+                      <div style="font-size:14px; font-weight:500; margin-bottom:8px;">📈 이동평균법</div>
+                      <div style="font-size:11px; color:#666; margin-bottom:12px;">매수 시점마다 평균단가 갱신</div>
+                      <table style="width:100%; font-size:12px;">
+                        <tr><td style="color:#666; padding:3px 0;">처분이익</td><td style="text-align:right;">₩{tax_mov['처분이익']:+,.0f}</td></tr>
+                        <tr><td style="color:#666; padding:3px 0;">처분손실</td><td style="text-align:right;">₩{tax_mov['처분손실']:+,.0f}</td></tr>
+                        <tr><td style="color:#666; padding:3px 0;">순처분손익</td><td style="text-align:right;">₩{tax_mov['순처분손익']:+,.0f}</td></tr>
+                        <tr><td style="color:#666; padding:3px 0;">과세표준</td><td style="text-align:right;">₩{tax_mov['과세표준']:+,.0f}</td></tr>
+                        <tr style="border-top:0.5px solid #ccc;"><td style="padding:6px 0 0; font-weight:500;">예상 세금</td><td style="text-align:right; padding:6px 0 0; font-weight:500; font-size:14px;">₩{tax_mov['예상세액']:,}</td></tr>
+                      </table>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("")  # 여백
+                
+                # 절세효과 결론
+                if saving > 0:
+                    st.success(
+                        f"### 🏆 **{recommended}**으로 신고 시 약 **₩{saving:,}** 절세 가능"
+                    )
+                else:
+                    st.info(
+                        f"### ℹ️ 두 방법의 세액이 동일 ({recommended} 적용 시 ₩{tax_avg['예상세액']:,})"
+                    )
+                
+                # 종목별 차이 (큰 차이 종목만)
+                df_avg = comparison['총평균법']['pnl_df']
+                df_mov = comparison['이동평균법']['pnl_df']
+                if not df_avg.empty and not df_mov.empty:
+                    diff_table = df_avg[['종목명', '처분손익(원)']].merge(
+                        df_mov[['종목명', '처분손익(원)']], on='종목명', suffixes=('_총평균', '_이동평균')
+                    )
+                    diff_table['차이'] = diff_table['처분손익(원)_이동평균'] - diff_table['처분손익(원)_총평균']
+                    # 차이가 의미 있는 종목만 (₩100 초과)
+                    significant = diff_table[diff_table['차이'].abs() > 100].sort_values('차이', key=abs, ascending=False)
+                    
+                    if not significant.empty:
+                        with st.expander(f"📋 종목별 손익 차이 보기 ({len(significant)}개 종목)", expanded=False):
+                            st.caption("두 방법 모두 같은 거래를 다르게 평가합니다. 차이 큰 종목 = 매수/매도가 시간 차이로 섞인 종목.")
+                            st.dataframe(
+                                significant.style.format({
+                                    '처분손익(원)_총평균': '₩{:+,.0f}',
+                                    '처분손익(원)_이동평균': '₩{:+,.0f}',
+                                    '차이': '₩{:+,.0f}',
+                                }).map(
+                                    lambda v: 'color: #0F6E56; font-weight: 500' if isinstance(v, (int, float)) and v > 0 else (
+                                        'color: #A32D2D' if isinstance(v, (int, float)) and v < 0 else ''
+                                    ),
+                                    subset=['차이']
+                                ),
+                                hide_index=True, use_container_width=True,
+                            )
+                
+                # 안내
+                st.info("""
+                💡 **계산 방법 선택 안내**
+                - **총평균법**: 매수/매도가 비슷한 가격대에 있을 때 유리 (계산 간단)
+                - **이동평균법**: 가격 변동성이 크고 분할 매도가 많을 때 차이 발생
+                - **국세청 신고 시 선택**: 자유 선택 가능하나, 첫 신고 후 일관 적용 권장
+                - **시뮬레이션 신뢰도**: 두 방법 모두 사장님이 업로드한 거래내역 기준 자동 계산
+                """)
     
     if user_type == '사업자' and loss_carryforward > 0:
         st.divider()
@@ -717,9 +835,26 @@ with tab3:
     st.markdown("### 📋 양도소득 정산")
     st.caption(f"신고자 유형: **{user_type}**" + (f"  |  이월결손금: ₩{loss_carryforward:,}" if user_type == '사업자' else ""))
     
+    # 수수료 필요경비 집계 (trades에서 직접)
+    buy_fee_total = sum(
+        float(t.get('수수료(원)', 0) or 0) for t in all_trades if t.get('거래구분') == '매수'
+    )
+    buy_tax_total = sum(
+        float(t.get('세금(원)', 0) or 0) for t in all_trades if t.get('거래구분') == '매수'
+    )
+    sell_fee_total = sum(
+        float(t.get('수수료(원)', 0) or 0) for t in all_trades if t.get('거래구분') == '매도'
+    )
+    sell_tax_total = sum(
+        float(t.get('세금(원)', 0) or 0) for t in all_trades if t.get('거래구분') == '매도'
+    )
+    total_buy_costs = buy_fee_total + buy_tax_total
+    total_sell_costs = sell_fee_total + sell_tax_total
+    total_costs = total_buy_costs + total_sell_costs
+    
     tax_data = pd.DataFrame([
-        {"항목": "① 처분이익", "금액": tax_info['처분이익']},
-        {"항목": "② 처분손실", "금액": tax_info['처분손실']},
+        {"항목": "① 처분이익 (수수료 차감 후)", "금액": tax_info['처분이익']},
+        {"항목": "② 처분손실 (수수료 차감 후)", "금액": tax_info['처분손실']},
         {"항목": "③ 순처분손익", "금액": tax_info['순처분손익']},
         {"항목": "④ 기본공제 (개인 250만)", "금액": tax_info['기본공제']},
         {"항목": "⑤ 이월결손금 차감", "금액": tax_info['이월결손금차감']},
@@ -738,6 +873,40 @@ with tab3:
     col1.metric("⑦ 적용 세율", tax_info['세율_설명'])
     if tax_info['예상세액'] is not None:
         col2.metric("⑧ 예상 세액", f"₩{tax_info['예상세액']:,}")
+    
+    # ─── 수수료 필요경비 명세 (별도 표시) ───
+    with st.expander(f"📑 필요경비 명세 (총 ₩{total_costs:,.0f} 반영됨)", expanded=True):
+        st.caption("아래 모든 비용은 처분손익 계산 시 이미 반영되어 있습니다 (정보 확인용 표시)")
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.markdown("##### 🔵 매수 부대비용 (취득가액 가산)")
+            st.markdown(f"""
+            | 항목 | 금액 |
+            |---|---:|
+            | 매수 수수료 | ₩{buy_fee_total:+,.0f} |
+            | 매수 거래세·제세금 | ₩{buy_tax_total:+,.0f} |
+            | **소계** | **₩{total_buy_costs:+,.0f}** |
+            """)
+            st.caption("💡 매수 시 발생한 비용은 **취득가액에 가산**되어 평균단가를 높입니다.")
+        
+        with col_b:
+            st.markdown("##### 🔴 매도 부대비용 (양도가액 차감)")
+            st.markdown(f"""
+            | 항목 | 금액 |
+            |---|---:|
+            | 매도 수수료 | ₩{sell_fee_total:+,.0f} |
+            | 매도 거래세·제세금 | ₩{sell_tax_total:+,.0f} |
+            | **소계** | **₩{total_sell_costs:+,.0f}** |
+            """)
+            st.caption("💡 매도 시 발생한 비용은 **양도가액에서 직접 차감**됩니다.")
+        
+        st.markdown("---")
+        st.markdown(f"#### 💰 총 필요경비 반영액: **₩{total_costs:,.0f}**")
+        st.caption(
+            f"이 비용이 없었다면 양도세는 약 **₩{round(total_costs * 0.22):,}** 더 발생했을 것입니다 "
+            f"(22% 세율 기준)."
+        )
     
     st.info("""
     💡 **신고 안내**

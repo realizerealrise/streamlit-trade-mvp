@@ -114,6 +114,191 @@ def calculate_stock_pnl(trades, opening_balance=None):
     return df
 
 
+def calculate_stock_pnl_moving_avg(trades, opening_balance=None):
+    """
+    종목별 손익 계산 (이동평균법)
+    
+    매수가 발생할 때마다 평균단가를 재계산하는 방식.
+    매도 시점의 평균단가를 사용하여 처분손익을 산정.
+    
+    국세청 양도세 신고 시 선택 가능한 방법 중 하나.
+    
+    Args:
+        trades: list of dict (통합 양식)
+        opening_balance: list of dict (기초잔고, optional)
+    
+    Returns:
+        DataFrame: 종목별 손익 현황 (총평균법과 동일 컬럼 구조)
+    """
+    opening_map = {}
+    if opening_balance:
+        for ob in opening_balance:
+            key = (ob['통화'], ob['종목코드'])
+            opening_map[key] = ob
+    
+    # 종목별로 시간순 처리 — 매수 시 평균단가 갱신, 매도 시 평균단가로 손익 산정
+    # 1단계: 거래를 시간순 정렬
+    sorted_trades = sorted(
+        [t for t in trades if t['거래구분'] in ('매수', '매도')],
+        key=lambda t: t.get('거래일자', '')
+    )
+    
+    # 2단계: 종목별 상태 추적 (실시간 갱신)
+    stocks = defaultdict(lambda: {
+        '종목명': '', '종목코드': '', '통화': '', '증권사': '',
+        '보유수량': 0,
+        '평균단가_원화': 0,       # 이동평균 (원화 기준, 부대비용 포함)
+        '매수횟수': 0,
+        '매수수량': 0, '매수금액_원화': 0, '매수부대비용': 0,
+        '매도횟수': 0,
+        '매도수량': 0, '매도금액_원화': 0, '매도부대비용': 0,
+        '처분이익': 0, '처분손실': 0, '처분손익': 0,
+    })
+    
+    for t in sorted_trades:
+        key = (t['통화'], t['종목코드'] or t['종목명'])
+        s = stocks[key]
+        if not s['종목명']:
+            s['종목명'] = t['종목명']
+            s['종목코드'] = t['종목코드']
+            s['통화'] = t['통화']
+            s['증권사'] = t['증권사']
+            # 기초잔고 매칭
+            if key in opening_map:
+                ob = opening_map[key]
+                s['보유수량'] = ob.get('수량', 0)
+                s['평균단가_원화'] = ob.get('평균단가', 0) if ob.get('수량', 0) > 0 else 0
+        
+        fee = float(t.get('수수료(원)', 0) or 0)
+        tax = float(t.get('세금(원)', 0) or 0)
+        부대비용 = fee + tax
+        
+        if t['거래구분'] == '매수':
+            # 이동평균 갱신: 신규 평균 = (기존 보유원가 + 신규 매수원가 + 매수부대비용) / 총수량
+            old_qty = s['보유수량']
+            old_value = old_qty * s['평균단가_원화']
+            new_qty = t['수량']
+            new_value = t['원화환산금액'] + 부대비용  # 매수 부대비용 포함
+            
+            total_qty = old_qty + new_qty
+            if total_qty > 0:
+                s['평균단가_원화'] = (old_value + new_value) / total_qty
+            s['보유수량'] = total_qty
+            
+            s['매수횟수'] += 1
+            s['매수수량'] += new_qty
+            s['매수금액_원화'] += t['원화환산금액']
+            s['매수부대비용'] += 부대비용
+        
+        else:  # 매도
+            # 매도 시점의 평균단가 사용하여 처분손익 산정
+            sell_qty = t['수량']
+            sell_amount = t['원화환산금액']
+            cost_of_sale = sell_qty * s['평균단가_원화']
+            pnl = sell_amount - cost_of_sale - 부대비용
+            
+            s['보유수량'] -= sell_qty
+            # 보유수량이 0 이하가 되면 평균단가 리셋
+            if s['보유수량'] <= 0:
+                s['평균단가_원화'] = 0
+                s['보유수량'] = 0
+            
+            s['매도횟수'] += 1
+            s['매도수량'] += sell_qty
+            s['매도금액_원화'] += sell_amount
+            s['매도부대비용'] += 부대비용
+            s['처분손익'] += pnl
+            if pnl > 0:
+                s['처분이익'] += pnl
+            else:
+                s['처분손실'] += pnl
+    
+    # DataFrame으로 변환 (총평균법 결과와 동일 컬럼 구조)
+    rows = []
+    for key, s in stocks.items():
+        rows.append({
+            '종목명': s['종목명'],
+            '종목코드': s['종목코드'],
+            '통화': s['통화'],
+            '증권사': s['증권사'],
+            '기초수량': 0,
+            '매수횟수': s['매수횟수'],
+            '매수수량': s['매수수량'],
+            '총매수(원통화)': 0,
+            '총매수(원)': s['매수금액_원화'],
+            '평균매수단가(원통화)': 0,
+            '평균매수단가(원)': s['평균단가_원화'] if s['보유수량'] > 0 else 0,
+            '매도횟수': s['매도횟수'],
+            '매도수량': s['매도수량'],
+            '총매도(원통화)': 0,
+            '총매도(원)': s['매도금액_원화'],
+            '매도원가(원)': s['매도금액_원화'] - s['매도부대비용'] - s['처분손익'],
+            '매도부대비용(원)': s['매도부대비용'],
+            '처분손익(원)': s['처분손익'],
+            '처분이익(+)': s['처분이익'],
+            '처분손실(-)': s['처분손실'],
+            '잔고수량': s['보유수량'],
+            '잔고원가(원)': s['보유수량'] * s['평균단가_원화'],
+        })
+    
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values('처분손익(원)', ascending=False).reset_index(drop=True)
+    return df
+
+
+def compare_tax_methods(trades, user_type='개인', loss_carryforward=0):
+    """
+    총평균법 vs 이동평균법 비교
+    
+    국세청 신고 시 사용자가 자유 선택 가능한 두 가지 방법을 모두 계산하여
+    더 유리한 방법을 추천.
+    
+    Returns:
+        dict: {
+            '총평균법': {pnl_df, tax_info, 방법명, 설명},
+            '이동평균법': {pnl_df, tax_info, 방법명, 설명},
+            '추천': '총평균법' or '이동평균법',
+            '절세효과': int (유리한 방법 선택 시 절세 금액),
+        }
+    """
+    # 총평균법
+    pnl_avg = calculate_stock_pnl(trades)
+    tax_avg = calculate_tax(pnl_avg, user_type, loss_carryforward)
+    
+    # 이동평균법
+    pnl_moving = calculate_stock_pnl_moving_avg(trades)
+    tax_moving = calculate_tax(pnl_moving, user_type, loss_carryforward)
+    
+    # 세금 비교
+    tax_a = tax_avg.get('예상세액') or 0
+    tax_b = tax_moving.get('예상세액') or 0
+    
+    if tax_a <= tax_b:
+        recommended = '총평균법'
+        saving = tax_b - tax_a
+    else:
+        recommended = '이동평균법'
+        saving = tax_a - tax_b
+    
+    return {
+        '총평균법': {
+            'pnl_df': pnl_avg,
+            'tax_info': tax_avg,
+            '방법명': '총평균법',
+            '설명': '연간 전체 매수의 평균단가로 매도 시 손익을 산정',
+        },
+        '이동평균법': {
+            'pnl_df': pnl_moving,
+            'tax_info': tax_moving,
+            '방법명': '이동평균법',
+            '설명': '매수 시점마다 평균단가를 갱신하여 매도 시 손익 산정',
+        },
+        '추천': recommended,
+        '절세효과': saving,
+    }
+
+
 def calculate_dividend(trades):
     """배당·이자·분배금 집계"""
     div_trades = [t for t in trades if t['거래구분'] in ('배당', '분배금', '이자')]
