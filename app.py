@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 import io
 
-from parsers import parse_toss_pdf, parse_nh_xls, parse_kis_xls, parse_samsung_xlsx
+from parsers import parse_toss_pdf, parse_nh_xls, parse_kis_xls
 from core import (
     calculate_stock_pnl,
     calculate_dividend,
@@ -69,10 +69,6 @@ with st.sidebar:
     kis_files = st.file_uploader("🟥 한투(한국투자증권) xls/xlsx", type=['xls', 'xlsx', 'xltx'],
                                   accept_multiple_files=True,
                                   help="한투 거래내역서 (분기 거래내역 또는 전체거래내역). 일부 xls는 Excel로 한 번 열어 xlsx로 저장 후 올려주세요.")
-    
-    samsung_files = st.file_uploader("🟦 삼성증권 xlsx", type=['xlsx'],
-                                      accept_multiple_files=True,
-                                      help="삼성증권 거래내역조회 엑셀")
     
     st.divider()
     st.subheader("👤 신고자 정보")
@@ -179,15 +175,6 @@ if kis_files:
         except Exception as e:
             parse_errors.append(f"한투 {f.name}: {e}")
 
-if samsung_files:
-    for f in samsung_files:
-        try:
-            trades = parse_samsung_xlsx(f)
-            all_trades.extend(trades)
-            st.sidebar.success(f"✅ 삼성 {f.name}: {len(trades)}건")
-        except Exception as e:
-            parse_errors.append(f"삼성 {f.name}: {e}")
-
 for err in parse_errors:
     st.error(err)
 
@@ -195,7 +182,7 @@ if not all_trades:
     st.info("👈 사이드바에서 거래내역 파일을 업로드하면 자동 분석이 시작됩니다.")
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.markdown("### 📥 1. 거래내역 업로드\n- 토스 PDF\n- 나무(NH) xls\n- 한투 xls/xlsx\n- 삼성증권 xlsx")
+        st.markdown("### 📥 1. 거래내역 업로드\n- 토스 PDF\n- 나무(NH) xls\n- 한투 xls/xlsx")
     with col2:
         st.markdown("### 🔄 2. 자동 분석\n- 종목별 손익\n- 환차익 분리\n- 평균단가법")
     with col3:
