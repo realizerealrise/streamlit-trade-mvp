@@ -125,7 +125,7 @@ def build_dashboard_workbook(trades, pnl_df, holdings_df, current_prices=None, f
         _build_stock_detail_sheet(ws_stock, stock_name, trades, pnl_df, holdings_df)
     
     # 1. 대시보드 마지막에 채움 (수식 참조)
-    _build_dashboard_sheet(ws_dash, pnl_df, holdings_df, year, stock_sheet_map)
+    _build_dashboard_sheet(ws_dash, pnl_df, holdings_df, year, stock_sheet_map, trades=trades)
     
     # 시트 순서 정리: 대시보드 → 종목손익현황 → 종목 시트들
     desired_order = ['★투자성과 대시보드', '★종목손익현황']
@@ -146,7 +146,7 @@ def build_dashboard_workbook(trades, pnl_df, holdings_df, current_prices=None, f
 
 
 # ─────────────── 시트 1: ★투자성과 대시보드 ───────────────
-def _build_dashboard_sheet(ws, pnl_df, holdings_df, year, stock_sheet_map):
+def _build_dashboard_sheet(ws, pnl_df, holdings_df, year, stock_sheet_map, trades=None):
     """대시보드 시트 빌드 — 사장님 양식 재현"""
     ws.sheet_view.showGridLines = False
     
@@ -159,6 +159,23 @@ def _build_dashboard_sheet(ws, pnl_df, holdings_df, year, stock_sheet_map):
     pnl_sheet = "'★종목손익현황'"
     last_row = len(pnl_df) + 3 if not pnl_df.empty else 4
     total_row = last_row + 1
+    
+    # 매수/매도 부대비용 사전 집계 (trades에서)
+    매수수수료_합 = 0
+    매수거래세_합 = 0
+    매도수수료_합 = 0
+    매도거래세_합 = 0
+    if trades:
+        for t in trades:
+            if t.get('거래구분') == '매수':
+                매수수수료_합 += float(t.get('수수료(원)', 0) or 0)
+                매수거래세_합 += float(t.get('세금(원)', 0) or 0)
+            elif t.get('거래구분') == '매도':
+                매도수수료_합 += float(t.get('수수료(원)', 0) or 0)
+                매도거래세_합 += float(t.get('세금(원)', 0) or 0)
+    매수부대비용_합 = 매수수수료_합 + 매수거래세_합
+    매도부대비용_합 = 매도수수료_합 + 매도거래세_합
+    총부대비용_합 = 매수부대비용_합 + 매도부대비용_합
     
     # ─── 제목 ───
     ws['B1'] = f'★ {year}년 투자 성과 대시보드'
@@ -183,19 +200,66 @@ def _build_dashboard_sheet(ws, pnl_df, holdings_df, year, stock_sheet_map):
     ]
     _write_kv_table(ws, 5, 'B', '항목', '금액', summary_data, fmt_value=FMT_KRW)
     
-    # ─── 섹션 2: 손익 분석 (E4:F11) ───
+    # ─── 섹션 2: 손익 분석 (E4 시작) — 매수/매도 부대비용 세분화 ───
     ws['E4'] = '■ 손익 분석'
     ws['E4'].font = FONT_SECTION
     
-    pnl_data = [
-        ('매도차손익', f"=SUM({pnl_sheet}!J4:J{last_row})"),
-        ('처분이익 (+)', f"=SUM({pnl_sheet}!K4:K{last_row})"),
-        ('처분손실 (−)', f"=SUM({pnl_sheet}!L4:L{last_row})"),
-        ('수수료 합계', f"=SUM({pnl_sheet}!O4:O{last_row})"),
-        ('거래세 합계', f"=SUM({pnl_sheet}!P4:P{last_row})"),
-        ('투자 순수익 (매도차손익 − 비용)', f"=F6-F9-F10"),
+    # 헤더 (5행)
+    ws['E5'] = '항목'
+    ws['F5'] = '금액'
+    for cell_ref in ('E5', 'F5'):
+        c = ws[cell_ref]
+        c.font = FONT_HEADER
+        c.fill = FILL_HEADER
+        c.alignment = ALIGN_CENTER
+        c.border = BORDER_ALL
+    
+    # 데이터 구조: (라벨, 값/수식, 스타일유형)
+    # 스타일유형: 'group' = 굵게 + 강조, 'sub' = 들여쓰기, 'total' = 노란 합계
+    pnl_rows = [
+        ('▶ 매도차손익', f"=SUM({pnl_sheet}!J4:J{last_row})", 'group'),
+        ('   처분이익 (+)', f"=SUM({pnl_sheet}!K4:K{last_row})", 'sub'),
+        ('   처분손실 (−)', f"=SUM({pnl_sheet}!L4:L{last_row})", 'sub'),
+        ('▶ 매수 부대비용', 매수부대비용_합, 'group'),
+        ('   매수수수료', 매수수수료_합, 'sub'),
+        ('   매수거래세', 매수거래세_합, 'sub'),
+        ('▶ 매도 부대비용', 매도부대비용_합, 'group'),
+        ('   매도수수료', 매도수수료_합, 'sub'),
+        ('   매도거래세', 매도거래세_합, 'sub'),
+        ('▶ 총 부대비용', 총부대비용_합, 'group'),
+        ('▶ 투자 순수익 (매도차손익 − 총 부대비용)', f"=F6-F15", 'total'),
     ]
-    _write_kv_table(ws, 5, 'E', '항목', '금액', pnl_data, fmt_value=FMT_KRW, last_row_total=True)
+    
+    for i, (label, value, style) in enumerate(pnl_rows):
+        r = 6 + i  # 6~16
+        ws[f'E{r}'] = label
+        ws[f'F{r}'] = value
+        ws[f'E{r}'].alignment = ALIGN_LEFT
+        ws[f'F{r}'].alignment = ALIGN_RIGHT
+        ws[f'F{r}'].number_format = FMT_KRW
+        ws[f'E{r}'].border = BORDER_ALL
+        ws[f'F{r}'].border = BORDER_ALL
+        
+        if style == 'group':
+            ws[f'E{r}'].font = FONT_BODY_BOLD
+            ws[f'F{r}'].font = FONT_BODY_BOLD
+            ws[f'E{r}'].fill = FILL_SUBTOTAL
+            ws[f'F{r}'].fill = FILL_SUBTOTAL
+        elif style == 'sub':
+            ws[f'E{r}'].font = FONT_BODY
+            ws[f'F{r}'].font = FONT_BODY
+        elif style == 'total':
+            ws[f'E{r}'].font = FONT_BODY_BOLD
+            ws[f'F{r}'].font = FONT_BODY_BOLD
+            ws[f'E{r}'].fill = FILL_TOTAL
+            ws[f'F{r}'].fill = FILL_TOTAL
+    
+    # 손익 분석 마지막 행 = 16 (6 + 11 - 1)
+    pnl_end_row = 6 + len(pnl_rows) - 1  # 16
+    
+    # 투자 순수익 수식은 F6 (매도차손익) - F15 (총 부대비용)
+    # pnl_rows에서 매도차손익은 인덱스 0 (= 행 6), 총 부대비용은 인덱스 9 (= 행 15)
+    ws[f'F{pnl_end_row}'] = f'=F6-F15'
     
     # ─── 섹션 3: 핵심 투자 지표 (I4:J9) ───
     ws['I4'] = '■ 핵심 투자 지표'
@@ -211,8 +275,8 @@ def _build_dashboard_sheet(ws, pnl_df, holdings_df, year, stock_sheet_map):
     ]
     _write_kpi_table(ws, 5, 'I', '지표', '값', kpi_data)
     
-    # ─── 섹션 4: 종목별 실현수익 TOP 10 (B15:G27) ───
-    current_row = 15
+    # ─── 섹션 4: 종목별 실현수익 TOP 10 (B18 시작) ───
+    current_row = 18
     ws.cell(row=current_row, column=2, value='■ 종목별 실현수익 TOP 10').font = FONT_SECTION
     current_row += 1
     _write_top_bottom_section(ws, current_row, pnl_df, pnl_sheet, last_row, stock_sheet_map,
@@ -240,9 +304,9 @@ def _build_dashboard_sheet(ws, pnl_df, holdings_df, year, stock_sheet_map):
                               top=False, by='수익률')
     current_row += 12
     
-    # ─── 섹션 8: 국가/통화별 손익 (I15~) ───
-    ws.cell(row=15, column=9, value='■ 국가/통화별 투자 손익').font = FONT_SECTION
-    _write_country_table(ws, 16, 'I', pnl_sheet, last_row)
+    # ─── 섹션 8: 국가/통화별 손익 (I18~) ───
+    ws.cell(row=18, column=9, value='■ 국가/통화별 투자 손익').font = FONT_SECTION
+    _write_country_table(ws, 19, 'I', pnl_sheet, last_row)
 
 
 def _write_kv_table(ws, start_row, start_col, h1, h2, data, fmt_value=FMT_KRW, last_row_total=False):
@@ -476,14 +540,21 @@ def _build_stock_pnl_sheet(ws, pnl_df, holdings_df, stock_sheet_map, trades=None
     """종목손익현황 시트 — 한 줄 = 한 종목"""
     ws.sheet_view.showGridLines = False
     
-    # 종목별 수수료/거래세 집계 (trades 사용)
-    fee_map = defaultdict(lambda: {'수수료': 0, '거래세': 0})
+    # 종목별 수수료/거래세 집계 (trades 사용) — 매수/매도 분리
+    fee_map = defaultdict(lambda: {
+        '매수수수료': 0, '매수거래세': 0,
+        '매도수수료': 0, '매도거래세': 0,
+    })
     if trades:
         for t in trades:
-            if t.get('거래구분') in ('매수', '매도'):
+            if t.get('거래구분') == '매수':
                 name = t.get('종목명', '')
-                fee_map[name]['수수료'] += float(t.get('수수료(원)', 0) or 0)
-                fee_map[name]['거래세'] += float(t.get('세금(원)', 0) or 0)
+                fee_map[name]['매수수수료'] += float(t.get('수수료(원)', 0) or 0)
+                fee_map[name]['매수거래세'] += float(t.get('세금(원)', 0) or 0)
+            elif t.get('거래구분') == '매도':
+                name = t.get('종목명', '')
+                fee_map[name]['매도수수료'] += float(t.get('수수료(원)', 0) or 0)
+                fee_map[name]['매도거래세'] += float(t.get('세금(원)', 0) or 0)
     
     # 열 너비 — 종목명은 넓게
     widths = {'A': 6, 'B': 35, 'C': 8, 'D': 10, 'E': 16, 'F': 12, 'G': 14, 'H': 16,
@@ -567,10 +638,12 @@ def _build_stock_pnl_sheet(ws, pnl_df, holdings_df, stock_sheet_map, trades=None
             ws.cell(row=r, column=13, value=float(hold['보유수량']))
             ws.cell(row=r, column=14, value=float(hold['평가금액']))
         
-        # 수수료/거래세 — trades에서 집계한 값 사용
-        fees = fee_map.get(stock_name, {'수수료': 0, '거래세': 0})
-        ws.cell(row=r, column=15, value=fees['수수료'])
-        ws.cell(row=r, column=16, value=fees['거래세'])
+        # 수수료/거래세 — trades에서 집계한 값 사용 (매수+매도 합산, 표시용)
+        fees = fee_map.get(stock_name, {'매수수수료': 0, '매수거래세': 0, '매도수수료': 0, '매도거래세': 0})
+        총수수료 = fees['매수수수료'] + fees['매도수수료']
+        총거래세 = fees['매수거래세'] + fees['매도거래세']
+        ws.cell(row=r, column=15, value=총수수료)
+        ws.cell(row=r, column=16, value=총거래세)
         
         # 서식
         for col_idx in range(1, 17):

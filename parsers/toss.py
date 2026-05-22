@@ -17,6 +17,10 @@ def parse_toss_pdf(file_obj):
     """
     토스증권 거래내역서 PDF → 거래 리스트
     
+    양식 자동 감지:
+    - 옛 양식: 환율, 거래수량, 거래대금, 단가, 수수료, 거래세, 제세금, 변제/연체합, 잔고, 잔액 (10개)
+    - 새 양식: 환율, 거래수량, 거래대금, 정산금액, 단가, 수수료, 거래세, 제세금, 변제/연체합, 잔고, 잔액 (11개)
+    
     Args:
         file_obj: Streamlit uploaded_file 또는 파일 경로
     
@@ -24,9 +28,14 @@ def parse_toss_pdf(file_obj):
         list of dict: 통합 양식 거래 데이터
     """
     all_lines = []
+    has_settlement_col = False  # 새 양식 (정산금액 컬럼) 여부
+    
     with pdfplumber.open(file_obj) as pdf:
         for page in pdf.pages:
             text = page.extract_text() or ''
+            # 헤더 라인에서 "정산금액" 키워드 검색 → 새 양식 감지
+            if '정산금액' in text:
+                has_settlement_col = True
             for line in text.split('\n'):
                 line = line.strip()
                 if line:
@@ -95,6 +104,19 @@ def parse_toss_pdf(file_obj):
         # 통합 양식으로 변환
         action_unified = '매수' if action == '구매' else '매도'
         
+        # 양식별 인덱스 매핑
+        # nums 배열 구조:
+        #   옛 양식: [환율, 거래수량, 거래대금, 단가, 수수료, 거래세, 제세금, ...]
+        #   새 양식: [환율, 거래수량, 거래대금, 정산금액, 단가, 수수료, 거래세, 제세금, ...]
+        if has_settlement_col:
+            # 새 양식: 정산금액 컬럼 한 칸씩 밀림
+            idx_fee = 5    # 수수료
+            idx_tax = 6    # 거래세
+        else:
+            # 옛 양식
+            idx_fee = 4
+            idx_tax = 5
+        
         parsed.append({
             '거래일자': date.replace('.', '-'),
             '증권사': '토스',
@@ -108,8 +130,8 @@ def parse_toss_pdf(file_obj):
             '거래금액': float(dollar_nums[0]) if len(dollar_nums) > 0 else 0,
             '환율': float(nums[0]) if len(nums) > 0 else 0,
             '원화환산금액': float(nums[2]) if len(nums) > 2 else 0,
-            '수수료(원)': float(nums[4]) if len(nums) > 4 else 0,
-            '세금(원)': float(nums[5]) if len(nums) > 5 else 0,
+            '수수료(원)': float(nums[idx_fee]) if len(nums) > idx_fee else 0,
+            '세금(원)': float(nums[idx_tax]) if len(nums) > idx_tax else 0,
             '비고': '',
         })
     

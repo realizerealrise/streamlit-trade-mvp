@@ -25,7 +25,7 @@ def calculate_stock_pnl(trades, opening_balance=None):
     stocks = defaultdict(lambda: {
         '종목명': '', '종목코드': '', '통화': '', '증권사': '',
         '기초수량': 0, '기초단가': 0, '기초금액': 0,
-        '매수횟수': 0, '매수수량': 0, '매수금액_원통화': 0, '매수금액_원화': 0, '매수수수료': 0,
+        '매수횟수': 0, '매수수량': 0, '매수금액_원통화': 0, '매수금액_원화': 0, '매수수수료': 0, '매수세금': 0,
         '매도횟수': 0, '매도수량': 0, '매도금액_원통화': 0, '매도금액_원화': 0, '매도부대비용': 0,
     })
     
@@ -52,6 +52,7 @@ def calculate_stock_pnl(trades, opening_balance=None):
             s['매수금액_원통화'] += t['거래금액']
             s['매수금액_원화'] += t['원화환산금액']
             s['매수수수료'] += t['수수료(원)']
+            s['매수세금'] += t['세금(원)']
         else:  # 매도
             s['매도횟수'] += 1
             s['매도수량'] += t['수량']
@@ -62,17 +63,20 @@ def calculate_stock_pnl(trades, opening_balance=None):
     rows = []
     for key, s in stocks.items():
         # 평균매수단가 (기초 + 매수)
+        # 세무상 매수원가 = 매수금액 + 매수부대비용 (수수료+세금)
         total_qty = s['기초수량'] + s['매수수량']
+        매수부대비용 = s['매수수수료'] + s['매수세금']
         if total_qty > 0:
             avg_price_local = (s['기초수량'] * s['기초단가'] + s['매수금액_원통화']) / total_qty
-            avg_price_krw = (s['기초금액'] + s['매수금액_원화']) / total_qty
+            # 매수 부대비용을 매수원가에 포함 (세무상 정확한 계산)
+            avg_price_krw = (s['기초금액'] + s['매수금액_원화'] + 매수부대비용) / total_qty
         else:
             avg_price_local = 0
             avg_price_krw = 0
         
-        # 매도원가 (KRW)
+        # 매도원가 (KRW) — 부대비용이 평균단가에 이미 포함됨
         cost_of_sale = s['매도수량'] * avg_price_krw
-        # 처분손익 = 매도금액(원화) - 매도원가 - 부대비용
+        # 처분손익 = 매도금액(원화) - 매도원가 - 매도부대비용
         realized_pnl = s['매도금액_원화'] - cost_of_sale - s['매도부대비용']
         
         # 잔고
