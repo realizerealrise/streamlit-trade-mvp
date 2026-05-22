@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 import io
 
-from parsers import parse_toss_pdf, parse_nh_xls, parse_kis_xls, parse_samsung_xlsx
+from parsers import parse_toss_pdf, parse_nh_xls, parse_kis_xls, parse_mirae_csv, parse_ibk_xls
 from core import (
     calculate_stock_pnl,
     calculate_stock_pnl_moving_avg,
@@ -72,9 +72,13 @@ with st.sidebar:
                                   accept_multiple_files=True,
                                   help="한투 거래내역서 (분기 거래내역 또는 전체거래내역). 일부 xls는 Excel로 한 번 열어 xlsx로 저장 후 올려주세요.")
     
-    samsung_files = st.file_uploader("🟦 삼성증권 xlsx", type=['xlsx'],
-                                      accept_multiple_files=True,
-                                      help="삼성증권 거래내역조회 엑셀")
+    mirae_files = st.file_uploader("🟫 미래에셋증권 CSV", type=['csv'],
+                                    accept_multiple_files=True,
+                                    help="미래에셋 거래내역 CSV (cp949 인코딩). 'KOSPI/KOSDAQ' 거래 자동 인식")
+    
+    ibk_files = st.file_uploader("🟪 IBK(산업)증권 xls/xlsx", type=['xls', 'xlsx'],
+                                  accept_multiple_files=True,
+                                  help="IBK증권 거래내역. xls 인식 불가 시 Excel로 한 번 열어 xlsx로 저장 후 올려주세요.")
     
     st.divider()
     st.subheader("👤 신고자 정보")
@@ -181,14 +185,23 @@ if kis_files:
         except Exception as e:
             parse_errors.append(f"한투 {f.name}: {e}")
 
-if samsung_files:
-    for f in samsung_files:
+if mirae_files:
+    for f in mirae_files:
         try:
-            trades = parse_samsung_xlsx(f)
+            trades = parse_mirae_csv(f)
             all_trades.extend(trades)
-            st.sidebar.success(f"✅ 삼성 {f.name}: {len(trades)}건")
+            st.sidebar.success(f"✅ 미래에셋 {f.name}: {len(trades)}건")
         except Exception as e:
-            parse_errors.append(f"삼성 {f.name}: {e}")
+            parse_errors.append(f"미래에셋 {f.name}: {e}")
+
+if ibk_files:
+    for f in ibk_files:
+        try:
+            trades = parse_ibk_xls(f)
+            all_trades.extend(trades)
+            st.sidebar.success(f"✅ IBK {f.name}: {len(trades)}건")
+        except Exception as e:
+            parse_errors.append(f"IBK {f.name}: {e}")
 
 for err in parse_errors:
     st.error(err)
@@ -197,7 +210,7 @@ if not all_trades:
     st.info("👈 사이드바에서 거래내역 파일을 업로드하면 자동 분석이 시작됩니다.")
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.markdown("### 📥 1. 거래내역 업로드\n- 토스 PDF\n- 나무(NH) xls\n- 한투 xls/xlsx\n- 삼성증권 xlsx")
+        st.markdown("### 📥 1. 거래내역 업로드\n- 토스 PDF\n- 나무(NH) xls\n- 한투 xls/xlsx\n- 미래에셋 CSV\n- IBK증권 xls/xlsx")
     with col2:
         st.markdown("### 🔄 2. 자동 분석\n- 종목별 손익\n- 환차익 분리\n- 평균단가법")
     with col3:

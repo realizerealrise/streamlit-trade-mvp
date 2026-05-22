@@ -182,7 +182,7 @@ def _build_dashboard_sheet(ws, pnl_df, holdings_df, year, stock_sheet_map, trade
     ws['B1'].font = FONT_TITLE
     ws.merge_cells('B1:G1')
     
-    ws['B2'] = f'분석 기준: {datetime.now().strftime("%Y-%m-%d")}  ·  토스 / 한투 / 나무 / 삼성 통합'
+    ws['B2'] = f'분석 기준: {datetime.now().strftime("%Y-%m-%d")}  ·  토스 / 한투 / 나무 / 미래에셋 / IBK 통합'
     ws['B2'].font = FONT_SUBTITLE
     ws.merge_cells('B2:G2')
     
