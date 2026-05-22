@@ -55,6 +55,31 @@ ADVICE_MAP = {
     # 기타
     'DR FEE 출금 USD': ('수수료', 'USD', '-', 'fee'),
     'Smart+타사이체출금': ('출금', 'KRW', '-', 'cash'),
+    
+    # ─── 한투 신규 양식 (전체거래내역) ───
+    # 국내 매수/매도 (HTS / MTS / 영업점 등)
+    'HTS거래소주식매수': ('매수', 'KRW', 'KOSPI', 'trade'),
+    'HTS거래소주식매도': ('매도', 'KRW', 'KOSPI', 'trade'),
+    'HTS코스닥주식매수': ('매수', 'KRW', 'KOSDAQ', 'trade'),
+    'HTS코스닥주식매도': ('매도', 'KRW', 'KOSDAQ', 'trade'),
+    'MTS거래소주식매수': ('매수', 'KRW', 'KOSPI', 'trade'),
+    'MTS거래소주식매도': ('매도', 'KRW', 'KOSPI', 'trade'),
+    'MTS코스닥주식매수': ('매수', 'KRW', 'KOSDAQ', 'trade'),
+    'MTS코스닥주식매도': ('매도', 'KRW', 'KOSDAQ', 'trade'),
+    '영업점거래소주식매수': ('매수', 'KRW', 'KOSPI', 'trade'),
+    '영업점거래소주식매도': ('매도', 'KRW', 'KOSPI', 'trade'),
+    
+    # 환전 (신규 양식)
+    '외화실시간직접매수환전 USD': ('환전매수', 'USD', '-', 'fx'),
+    '외화실시간직접매도환전 USD': ('환전매도', 'USD', '-', 'fx'),
+    '외화실시간직접매수환전 JPY': ('환전매수', 'JPY', '-', 'fx'),
+    '외화실시간직접매도환전 JPY': ('환전매도', 'JPY', '-', 'fx'),
+    '외화실시간직접매수환전 HKD': ('환전매수', 'HKD', '-', 'fx'),
+    '외화실시간직접매도환전 HKD': ('환전매도', 'HKD', '-', 'fx'),
+    
+    # 이체
+    '타사이체입금': ('입금', 'KRW', '-', 'cash'),
+    '타사이체출금': ('출금', 'KRW', '-', 'cash'),
 }
 
 # 거래항목 컬럼 패턴: "수량 * 단가 = 금액"
@@ -115,9 +140,52 @@ def _format_date(d):
     return str(d)
 
 
+def _detect_format(file_obj):
+    """
+    한투 파일 양식 자동 감지
+    
+    Returns:
+        'legacy': 분기 거래내역 양식 (12+ 컬럼, header=0)
+        'new': 전체거래내역 양식 (9 컬럼, header가 행 7-8)
+    """
+    if hasattr(file_obj, 'seek'):
+        file_obj.seek(0)
+    
+    # header 없이 raw로 읽어서 1행 보기
+    try:
+        df_raw = pd.read_excel(file_obj, engine='openpyxl', header=None)
+    except Exception:
+        try:
+            if hasattr(file_obj, 'seek'):
+                file_obj.seek(0)
+            df_raw = pd.read_excel(file_obj, engine='xlrd', header=None)
+        except Exception:
+            return 'legacy'  # 기본값
+    
+    if hasattr(file_obj, 'seek'):
+        file_obj.seek(0)
+    
+    # 첫 셀이 "전체거래내역"이면 신규 양식
+    first_cell = str(df_raw.iloc[0, 0]) if not df_raw.empty else ''
+    if '전체거래내역' in first_cell:
+        return 'new'
+    
+    # 신규 양식 특징: 9개 컬럼, 행 7에 "거래일" 텍스트
+    if df_raw.shape[1] == 9 and len(df_raw) > 8:
+        cell_7_0 = str(df_raw.iloc[7, 0]) if df_raw.iloc[7, 0] is not None else ''
+        if '거래일' in cell_7_0:
+            return 'new'
+    
+    return 'legacy'
+
+
 def parse_kis_xls(file_obj):
     """
-    한투 거래내역 xls → 통합 양식 거래 리스트
+    한투 거래내역 → 통합 양식 거래 리스트 (양식 자동 감지)
+    
+    지원 양식:
+    1. Legacy (분기 거래내역): 12+ 컬럼, 메인+부속 다행 구조
+    2. New (전체거래내역): 9 컬럼, 2행 1세트 구조
     
     Args:
         file_obj: Streamlit uploaded_file 또는 파일 경로
@@ -125,6 +193,120 @@ def parse_kis_xls(file_obj):
     Returns:
         list of dict: 통합 양식 거래 데이터
     """
+    fmt = _detect_format(file_obj)
+    
+    if fmt == 'new':
+        return _parse_kis_new(file_obj)
+    else:
+        return _parse_kis_legacy(file_obj)
+
+
+def _parse_kis_new(file_obj):
+    """한투 전체거래내역 양식 (신규) — 2행 1세트"""
+    if hasattr(file_obj, 'seek'):
+        file_obj.seek(0)
+    df = pd.read_excel(file_obj, engine='openpyxl', header=None)
+    
+    # 양식 구조:
+    # 행 0~6: 헤더/메타
+    # 행 7: 헤더 1 (거래일, 종목명, 거래수량, 환율, 거래금액, 수수료, 유가잔고, 잔액, 상대계좌)
+    # 행 8: 헤더 2 (거래종류, 잔고번호, 거래단가, 외환잔액, 정산금액, 거래세, 세금, 부가세, 접속매체)
+    # 행 9부터: 데이터 (2행 1세트)
+    
+    parsed = []
+    i = 9
+    n = len(df)
+    
+    while i < n:
+        main = df.iloc[i]
+        # 다음 행이 부속 (있어야 함)
+        if i + 1 >= n:
+            break
+        sub = df.iloc[i + 1]
+        
+        # 메인 행: 거래일, 종목명, 거래수량, 환율, 거래금액, 수수료, 유가잔고, 잔액, 상대계좌
+        # 부속 행: 거래종류, 잔고번호, 거래단가, 외환잔액, 정산금액, 거래세, 세금, 부가세, 접속매체
+        
+        date_val = main.iloc[0]
+        if pd.isna(date_val):
+            i += 1
+            continue
+        
+        advice = str(sub.iloc[0]).strip() if pd.notna(sub.iloc[0]) else ''
+        if not advice or advice == 'nan':
+            i += 2
+            continue
+        
+        # 거래 종류 분류
+        if advice not in ADVICE_MAP:
+            i += 2
+            continue
+        tx_type, currency, market, category = ADVICE_MAP[advice]
+        
+        stock_name = str(main.iloc[1]).strip() if pd.notna(main.iloc[1]) else ''
+        if stock_name == 'nan': stock_name = ''
+        
+        qty = _to_num(main.iloc[2])
+        exchange_rate = _to_num(main.iloc[3])  # 환율
+        deal_amount = _to_num(main.iloc[4])     # 거래금액 (원화)
+        fee = _to_num(main.iloc[5])             # 수수료
+        
+        price = _to_num(sub.iloc[2])            # 거래단가
+        settle_amount = _to_num(sub.iloc[4])    # 정산금액
+        trade_tax = _to_num(sub.iloc[5])        # 거래세
+        misc_tax = _to_num(sub.iloc[6])         # 세금
+        tax_total = trade_tax + misc_tax
+        
+        # 환율 처리
+        if exchange_rate == 0:
+            exchange_rate = 1.0
+        
+        # 원화 환산 금액
+        if currency == 'KRW':
+            krw_amount = deal_amount
+            fee_krw = fee
+            tax_krw = tax_total
+        elif currency == 'JPY':
+            krw_amount = deal_amount  # 신규 양식은 거래금액이 이미 원화
+            fee_krw = fee
+            tax_krw = tax_total
+        else:
+            krw_amount = deal_amount  # 신규 양식도 거래금액 컬럼이 원화
+            fee_krw = fee
+            tax_krw = tax_total
+        
+        # 종목코드 추출 (신규 양식엔 별도 컬럼 없음, 종목명에 포함된 경우)
+        code = ''
+        code_match = re.search(r'\(([A-Z0-9]{6,12})\)', stock_name)
+        if code_match:
+            code = code_match.group(1)
+            stock_name = stock_name.split('(')[0].strip()
+        
+        parsed.append({
+            '거래일자': _format_date(date_val),
+            '증권사': '한투',
+            '통화': currency,
+            '시장': market,
+            '거래구분': tx_type,
+            '종목명': stock_name,
+            '종목코드': code,
+            '수량': qty,
+            '단가': price,
+            '거래금액': deal_amount,
+            '환율': exchange_rate,
+            '원화환산금액': round(krw_amount, 2),
+            '수수료(원)': round(fee_krw, 2),
+            '세금(원)': round(tax_krw, 2),
+            '비고': advice,
+        })
+        
+        i += 2
+    
+    return parsed
+
+
+def _parse_kis_legacy(file_obj):
+    """한투 분기 거래내역 양식 (기존) — 메인+다중 부속 행 구조"""
     df = _load_kis_dataframe(file_obj)
     
     # 컬럼명 정규화 (한투는 거래일, 순번, 적요, 종목(잔고)번호, 거래항목, 입출금고, ...)

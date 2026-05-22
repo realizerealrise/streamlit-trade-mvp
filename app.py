@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 import io
 
-from parsers import parse_toss_pdf, parse_nh_xls
+from parsers import parse_toss_pdf, parse_nh_xls, parse_kis_xls, parse_samsung_xlsx
 from core import (
     calculate_stock_pnl,
     calculate_dividend,
@@ -27,6 +27,7 @@ from core import (
     fetch_all_prices,
     isin_to_ticker,
     ISIN_TO_TICKER,
+    build_dashboard_workbook,
 )
 
 st.set_page_config(
@@ -65,8 +66,13 @@ with st.sidebar:
     
     toss_files = st.file_uploader("🟦 토스증권 PDF", type=['pdf'], accept_multiple_files=True)
     nh_files = st.file_uploader("🟧 나무증권(NH) xls", type=['xls', 'xlsx'], accept_multiple_files=True)
-    kis_files = st.file_uploader("🟥 한투 xls (개발 중)", type=['xls', 'xlsx'],
-                                  accept_multiple_files=True, disabled=True)
+    kis_files = st.file_uploader("🟥 한투(한국투자증권) xls/xlsx", type=['xls', 'xlsx', 'xltx'],
+                                  accept_multiple_files=True,
+                                  help="한투 거래내역서 (분기 거래내역 또는 전체거래내역). 일부 xls는 Excel로 한 번 열어 xlsx로 저장 후 올려주세요.")
+    
+    samsung_files = st.file_uploader("🟦 삼성증권 xlsx", type=['xlsx'],
+                                      accept_multiple_files=True,
+                                      help="삼성증권 거래내역조회 엑셀")
     
     st.divider()
     st.subheader("👤 신고자 정보")
@@ -86,6 +92,51 @@ with st.sidebar:
         cny_krw = st.number_input("CNY/KRW", value=200.0, step=1.0)
     
     fx_rates = {'KRW': 1.0, 'USD': usd_krw, 'JPY': jpy_krw, 'HKD': hkd_krw, 'CNY': cny_krw}
+    
+    st.divider()
+    with st.expander("💬 피드백 / 양식 요청", expanded=False):
+        st.caption("도구 사용해보시고 개선점 / 추가하고 싶은 증권사 양식 알려주세요!")
+        
+        feedback_type = st.radio(
+            "유형",
+            ["🐛 버그 신고", "💡 기능 제안", "🏢 새 증권사 양식 추가 요청", "🙋 기타 문의"],
+            key="fb_type"
+        )
+        
+        feedback_text = st.text_area(
+            "내용",
+            placeholder=(
+                "예시:\n"
+                "• [버그] 양도세 정산 탭에서 숫자가 -로 나옴\n"
+                "• [기능] 종목별 보유기간도 표시해줬으면\n"
+                "• [양식] 키움증권 거래내역 양식 추가 요청 (파일 첨부 함께)"
+            ),
+            height=120,
+            key="fb_text"
+        )
+        
+        contact = st.text_input("회신받을 이메일 (선택)", placeholder="you@example.com", key="fb_contact")
+        
+        if st.button("📨 피드백 보내기", use_container_width=True, type="primary", key="fb_submit"):
+            if feedback_text.strip():
+                # Streamlit 세션에 저장 (실제 운영 시: 이메일/DB 전송)
+                if 'feedbacks' not in st.session_state:
+                    st.session_state.feedbacks = []
+                st.session_state.feedbacks.append({
+                    '시간': datetime.now().strftime('%Y-%m-%d %H:%M'),
+                    '유형': feedback_type,
+                    '내용': feedback_text,
+                    '연락처': contact,
+                })
+                st.success("✅ 피드백 접수! 감사합니다 🙏")
+                st.info("💡 양식 파일을 같이 보내주실 때는 아래 메일로 부탁드려요:")
+                st.code("realizerealrise@gmail.com", language=None)
+            else:
+                st.warning("내용을 입력해주세요")
+        
+        st.divider()
+        st.caption("📧 직접 메일: **realizerealrise@gmail.com**")
+        st.caption("(양식 파일 첨부는 메일로 보내주세요)")
 
 
 st.title("📊 통합 거래 분석 대시보드")
@@ -119,6 +170,24 @@ if nh_files:
         except Exception as e:
             parse_errors.append(f"나무 {f.name}: {e}")
 
+if kis_files:
+    for f in kis_files:
+        try:
+            trades = parse_kis_xls(f)
+            all_trades.extend(trades)
+            st.sidebar.success(f"✅ 한투 {f.name}: {len(trades)}건")
+        except Exception as e:
+            parse_errors.append(f"한투 {f.name}: {e}")
+
+if samsung_files:
+    for f in samsung_files:
+        try:
+            trades = parse_samsung_xlsx(f)
+            all_trades.extend(trades)
+            st.sidebar.success(f"✅ 삼성 {f.name}: {len(trades)}건")
+        except Exception as e:
+            parse_errors.append(f"삼성 {f.name}: {e}")
+
 for err in parse_errors:
     st.error(err)
 
@@ -126,7 +195,7 @@ if not all_trades:
     st.info("👈 사이드바에서 거래내역 파일을 업로드하면 자동 분석이 시작됩니다.")
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.markdown("### 📥 1. 거래내역 업로드\n- 토스 PDF / 나무 xls\n- 한투 xls (곧)")
+        st.markdown("### 📥 1. 거래내역 업로드\n- 토스 PDF\n- 나무(NH) xls\n- 한투 xls/xlsx\n- 삼성증권 xlsx")
     with col2:
         st.markdown("### 🔄 2. 자동 분석\n- 종목별 손익\n- 환차익 분리\n- 평균단가법")
     with col3:
@@ -429,90 +498,133 @@ with tab_tax:
             
             loss_count = (entered['평가손익(원)'] < 0).sum()
             gain_count = (entered['평가손익(원)'] > 0).sum()
+            sum_unreal_loss = entered[entered['평가손익(원)'] < 0]['평가손익(원)'].sum()
+            sum_unreal_gain = entered[entered['평가손익(원)'] > 0]['평가손익(원)'].sum()
             
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("💵 실현이익", f"₩{sim['현재실현이익']:,.0f}")
-            c2.metric("💸 실현손실", f"₩{sim['현재실현손실']:,.0f}")
-            c3.metric(f"📉 미실현 손실 ({loss_count}종목)", 
-                      f"₩{entered[entered['평가손익(원)']<0]['평가손익(원)'].sum():,.0f}")
-            c4.metric(f"📈 미실현 이익 ({gain_count}종목)",
-                      f"₩{entered[entered['평가손익(원)']>0]['평가손익(원)'].sum():,.0f}")
+            # ─────────────────────────────────────────
+            # 🪜 Step 1. 현재 상황 — 이미 확정된 양도세
+            # ─────────────────────────────────────────
+            st.markdown("---")
+            st.markdown("##### `Step 1 · 현재 상황`")
+            st.markdown("### 📍 지금까지 확정된 양도세")
+            st.caption("올해 이미 매도한 종목들 기준 (실현된 손익)")
             
-            st.markdown("### 시나리오 비교")
-            col_a, col_b = st.columns(2)
-            
-            with col_a:
-                st.markdown("#### 📌 옵션 A · 현 상태 유지")
-                if user_type == '개인':
-                    st.markdown(f"""
-                    | 항목 | 금액 |
-                    |---|---:|
-                    | 순 실현손익 | ₩{sim['옵션A']['순실현손익']:,.0f} |
-                    | 250만 공제 | -₩{sim['옵션A']['기본공제']:,.0f} |
-                    | **과세표준** | **₩{sim['옵션A']['과세표준']:,.0f}** |
-                    | **예상 세금 (22%)** | **₩{sim['옵션A']['예상세금']:,.0f}** |
-                    """)
-                else:
-                    st.markdown(f"""
-                    | 항목 | 금액 |
-                    |---|---:|
-                    | 순 실현손익 | ₩{sim['옵션A']['순실현손익']:,.0f} |
-                    | 과세표준 | ₩{sim['옵션A']['과세표준']:,.0f} |
-                    | 세금 | 법인세 합산 (별도) |
-                    """)
-            
-            with col_b:
-                st.markdown("#### 🎯 옵션 B · 손실 종목 매도")
-                if user_type == '개인':
-                    st.markdown(f"""
-                    | 항목 | 금액 |
-                    |---|---:|
-                    | 추가 실현손실 | ₩{sim['옵션B']['추가실현손실']:,.0f} |
-                    | 새 순실현손익 | ₩{sim['옵션B']['새순실현손익']:,.0f} |
-                    | 250만 공제 | -₩{sim['옵션B']['기본공제']:,.0f} |
-                    | **새 과세표준** | **₩{sim['옵션B']['과세표준']:,.0f}** |
-                    | **새 예상 세금 (22%)** | **₩{sim['옵션B']['예상세금']:,.0f}** |
-                    """)
-                else:
-                    st.markdown(f"""
-                    | 항목 | 금액 |
-                    |---|---:|
-                    | 추가 실현손실 | ₩{sim['옵션B']['추가실현손실']:,.0f} |
-                    | 새 순실현손익 | ₩{sim['옵션B']['새순실현손익']:,.0f} |
-                    """)
-            
-            if sim['옵션B']['절세효과'] and sim['옵션B']['절세효과'] > 0:
-                st.success(f"### 💰 절세 효과: ₩{sim['옵션B']['절세효과']:,.0f}")
-            
-            if not sim['옵션B']['매도대상'].empty:
-                st.markdown("#### 💡 손실 실현 추천 종목 (매도 권장 — 노란색 강조)")
-                rec_cols = ['종목명', '종목코드', '통화', '증권사', '보유수량', 
-                            '평균매수가(원통화)', '현재가(원통화)', '평가손익(원)']
-                if '절세효과(원)' in sim['옵션B']['매도대상'].columns:
-                    rec_cols.append('절세효과(원)')
-                rec = sim['옵션B']['매도대상'][rec_cols].copy()
+            if user_type == '개인':
+                st.markdown(f"""
+                | 항목 | 금액 |
+                |---|---:|
+                | 실현이익 (매도 확정) | <span style="color:#0F6E56">+₩{sim['현재실현이익']:,.0f}</span> |
+                | 실현손실 (매도 확정) | <span style="color:#A32D2D">₩{sim['현재실현손실']:,.0f}</span> |
+                | **순실현손익** | **₩{sim['옵션A']['순실현손익']:,.0f}** |
+                | 250만원 기본공제 | -₩{sim['옵션A']['기본공제']:,.0f} |
+                | **과세표준** | **₩{sim['옵션A']['과세표준']:,.0f}** |
+                """, unsafe_allow_html=True)
                 
-                fmt_dict = {
-                    '보유수량': '{:,.4f}',
-                    '평균매수가(원통화)': '{:,.2f}',
-                    '현재가(원통화)': '{:,.2f}',
-                    '평가손익(원)': '₩{:+,.0f}',
-                }
-                if '절세효과(원)' in rec.columns:
-                    fmt_dict['절세효과(원)'] = '₩{:+,.0f}'
+                st.error(f"### 💸 현재 상태 유지 시 예상 양도세: **₩{sim['옵션A']['예상세금']:,}**")
+                st.caption("👆 5월 신고기에 납부할 양도소득세 (22% = 양도세 20% + 지방세 2%)")
+            else:
+                st.markdown(f"""
+                | 항목 | 금액 |
+                |---|---:|
+                | 실현이익 | +₩{sim['현재실현이익']:,.0f} |
+                | 실현손실 | ₩{sim['현재실현손실']:,.0f} |
+                | **순실현손익** | **₩{sim['옵션A']['순실현손익']:,.0f}** |
+                | 과세표준 (법인세 합산 대상) | ₩{sim['옵션A']['과세표준']:,.0f} |
+                """)
+                st.info("법인세는 다른 영업이익과 합산되어 산정됩니다. 사이드바에서 이월결손금 입력 시 별도 시뮬 가능.")
+            
+            # ─────────────────────────────────────────
+            # 🪜 Step 2. 보유 종목 분석 — 미실현 손익
+            # ─────────────────────────────────────────
+            st.markdown("---")
+            st.markdown("##### `Step 2 · 보유 종목 분석`")
+            st.markdown("### 🔍 지금 들고 있는 종목들")
+            st.caption(f"입력한 현재가 기준 평가손익 ({len(entered)}개 종목 분석)")
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                st.metric(f"📉 미실현 손실 ({loss_count}종목)",
+                          f"₩{sum_unreal_loss:,.0f}",
+                          help="현재 들고 있는 손실 종목들의 평가손실 합")
+            with c2:
+                st.metric(f"📈 미실현 이익 ({gain_count}종목)",
+                          f"₩{sum_unreal_gain:+,.0f}",
+                          help="현재 들고 있는 이익 종목들의 평가이익 합")
+            
+            # ─────────────────────────────────────────
+            # 🪜 Step 3. 세무 관점 참고 — 손실 매도 시뮬
+            # ─────────────────────────────────────────
+            if user_type == '개인' and not sim['옵션B']['매도대상'].empty and sim['옵션B']['절세효과'] > 0:
+                st.markdown("---")
+                st.markdown("##### `Step 3 · 세무 관점 참고`")
+                st.markdown("### 💡 손실 종목 매도 후 재매수 시뮬레이션")
+                st.caption("미실현 손실을 실현시키면 올해 양도세 과세표준이 줄어듭니다. "
+                           "한국 세법상 매도 후 즉시 재매수해도 양도세 손익은 인정됩니다 (워시세일 룰 없음).")
+                
+                # 액션 플랜 표
+                st.markdown("#### 📋 종목별 시뮬레이션")
+                rec = sim['옵션B']['매도대상'][['종목명', '종목코드', '통화', '증권사', '보유수량',
+                                                '평균매수가(원통화)', '현재가(원통화)', '평가손익(원)', '절세효과(원)']].copy()
                 
                 st.dataframe(
-                    rec.style.format(fmt_dict).apply(
-                        lambda row: ['background-color: #FFF2CC' for _ in row], axis=1
+                    rec.style.format({
+                        '보유수량': '{:,.4f}',
+                        '평균매수가(원통화)': '{:,.2f}',
+                        '현재가(원통화)': '{:,.2f}',
+                        '평가손익(원)': '₩{:+,.0f}',
+                        '절세효과(원)': '₩{:+,.0f}',
+                    }).map(
+                        lambda v: 'color: #A32D2D' if isinstance(v, (int, float)) and v < 0 else '',
+                        subset=['평가손익(원)']
+                    ).map(
+                        lambda v: 'color: #0F6E56; font-weight: 500' if isinstance(v, (int, float)) and v > 0 else '',
+                        subset=['절세효과(원)']
                     ),
                     hide_index=True, use_container_width=True,
                 )
+                st.caption("📐 절세효과는 손실 큰 종목부터 순차 매도 시의 한계 절세액입니다.")
+                
+                # 시나리오 결과
+                st.markdown("#### 📊 시뮬레이션 적용 후")
+                st.markdown(f"""
+                | 항목 | 적용 전 | 적용 후 |
+                |---|---:|---:|
+                | 순실현손익 | ₩{sim['옵션A']['순실현손익']:,.0f} | ₩{sim['옵션B']['새순실현손익']:,.0f} |
+                | 과세표준 | ₩{sim['옵션A']['과세표준']:,.0f} | ₩{sim['옵션B']['과세표준']:,.0f} |
+                | 예상 세금 | ₩{sim['옵션A']['예상세금']:,} | ₩{sim['옵션B']['예상세금']:,} |
+                """)
+                
+                # 세금 비교 시각화
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown(f"""
+                    <div style="background:#FCEBEB; border-radius:8px; padding:14px; text-align:center;">
+                      <div style="font-size:13px; color:#666;">현재 상태 유지 시</div>
+                      <div style="font-size:22px; font-weight:500; color:#A32D2D;">₩{sim['옵션A']['예상세금']:,}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with c2:
+                    st.markdown(f"""
+                    <div style="background:#EAF3DE; border-radius:8px; padding:14px; text-align:center;">
+                      <div style="font-size:13px; color:#666;">손실 매도+재매수 시뮬 적용 시</div>
+                      <div style="font-size:22px; font-weight:500; color:#3B6D11;">₩{sim['옵션B']['예상세금']:,}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.success(f"### 💰 절세 시뮬레이션 결과: **₩{sim['옵션B']['절세효과']:,}**")
+                st.caption("⚠️ 본 수치는 세무 계산 결과의 참고 자료이며, 실제 매매 판단은 종목 전망과 함께 종합 검토가 필요합니다.")
             
+            # ─────────────────────────────────────────
+            # 보너스: 250만 공제 한도 활용 (Step 3 보완)
+            # ─────────────────────────────────────────
             if user_type == '개인' and sim['옵션C']['여유공제'] > 0:
                 st.markdown("---")
-                st.markdown("#### 🆓 옵션 C · 250만 공제 한도 활용 (무세금 이익 실현)")
+                st.markdown("##### `참고`")
+                st.markdown("### 🆓 250만원 공제 한도 활용 (무세금 이익 실현)")
                 st.info(f"""
-                - 남은 공제 한도: **₩{sim['옵션C']['여유공제']:,.0f}**
+                현재 실현이익이 250만원에 못 미쳐서 **₩{sim['옵션C']['여유공제']:,.0f}** 만큼 공제 한도가 남아있습니다.  
+                이 한도 안에서 이익 종목을 매도하면 양도세 없이 이익 실현 가능합니다.
+                
                 - 무세금 실현 가능 금액: **₩{sim['옵션C']['무세금실현가능액']:,.0f}**
                 """)
                 if not sim['옵션C']['추천이익종목'].empty:
@@ -554,15 +666,22 @@ with tab_tax:
             st.success(f"💰 절세 효과: ₩{corp_sim['절세효과']:,.0f}")
     
     st.divider()
-    st.warning("""
-    ### ⚠️ 본 시뮬레이션은 참고 자료입니다 (면책 안내)
+    st.error("""
+    ### ⚠️ 본 시뮬레이션은 **세무 계산 참고 자료**입니다
     
-    - 본 도구는 **세무 자문이나 투자 권유가 아닙니다.** 표시된 절세 효과는 입력 데이터 기준 자동 계산값입니다.
-    - 매도 권장 표시는 양도세 절감만 고려한 산정이며, **종목의 향후 전망 / 손실 회복 가능성은 별도 판단**이 필요합니다.
-    - 미실현 손익은 사용자가 입력한 현재가 기준입니다. 실제 매도가는 시장 변동으로 달라질 수 있습니다.
+    **본 도구의 성격**
+    - 본 도구는 **양도세 계산 결과를 시각화**한 참고 자료이며, **세무 자문이나 투자 권유가 아닙니다.**
+    - "매도 후 재매수" 등의 표현은 세법상 가능한 옵션을 **정보로 제시**한 것일 뿐, **매매 권유가 아닙니다.**
+    - 표시된 모든 절세 효과는 사용자가 입력한 데이터를 기준으로 한 **자동 계산 결과**입니다.
+    
+    **사용 시 주의**
+    - 미실현 손익은 사용자가 입력한 현재가 기준이며, 실제 매도가는 시장 변동으로 달라질 수 있습니다.
+    - 종목의 향후 전망 / 손실 회복 가능성 / 거래 비용 / 환차 영향 등은 **별도 종합 판단**이 필요합니다.
     - 연말 (12월 30일 체결 기준) 이후 매도분은 **다음 해 손익**으로 분류됩니다.
+    
+    **신고 시 확인사항**
     - **국내 비상장주식 양도**가 있는 경우 해외주식 양도소득과 **합산 신고**가 필요합니다 (양도소득세 신고서 별지).
-    - 실제 세금 신고 전 **세무 전문가**와 상담하세요.
+    - 실제 세금 신고 전 반드시 **세무 전문가와 상담**하시기 바랍니다.
     """)
 
 
@@ -685,11 +804,66 @@ with tab5:
 
 with tab6:
     st.markdown("### 📥 결과 다운로드")
+    
+    # ★ 보고서급 대시보드 엑셀 (최상단 강조)
+    st.markdown("---")
+    st.markdown("#### ★ 투자성과 대시보드 (보고용)")
+    st.caption("대표님·고객님 보여드릴 만한 보고서급 엑셀. 3개 시트(대시보드/종목손익현황/종목별 거래내역) 구성, 하이퍼링크 자동 연결")
+    
+    col_dash_a, col_dash_b = st.columns([3, 1])
+    with col_dash_a:
+        st.markdown("""
+        - 📊 **★투자성과 대시보드** — 연간 요약 / 손익 분석 / 핵심 지표 / TOP·BOTTOM 10 / 국가별
+        - 📋 **★종목손익현황** — 종목별 매수·매도·잔고 한 줄 요약 (하이퍼링크)
+        - 📑 **종목별 거래내역** — 종목당 1시트 (사장님 회계 양식 그대로)
+        """)
+    with col_dash_b:
+        target_year = st.selectbox("대상 연도", 
+                                    sorted({int(t['거래일자'][:4]) for t in all_trades 
+                                            if t.get('거래일자', '')[:4].isdigit()}, reverse=True),
+                                    key="dash_year")
+    
+    if st.button("⭐ 보고서급 대시보드 엑셀 생성", use_container_width=True, type="primary", key="dl_dashboard"):
+        with st.spinner(f"📊 {target_year}년 대시보드 생성 중... (종목 수에 따라 5~15초)"):
+            try:
+                # 해당 연도 거래만 필터
+                year_trades = [t for t in all_trades 
+                              if t.get('거래일자', '').startswith(str(target_year))]
+                year_pnl = calculate_stock_pnl(year_trades)
+                year_holdings = get_current_holdings(year_trades)
+                
+                # 현재가 적용 (입력된 경우)
+                if 'current_prices' in st.session_state and st.session_state.current_prices:
+                    year_holdings = apply_current_prices(
+                        year_holdings, st.session_state.current_prices, fx_rates
+                    )
+                
+                buffer = build_dashboard_workbook(
+                    year_trades, year_pnl, year_holdings, 
+                    fx_rates=fx_rates, year=target_year
+                )
+                
+                st.success(f"✅ {target_year}년 대시보드 생성 완료! ({len(year_pnl)}개 종목, {len(year_trades)}건 거래)")
+                
+                st.download_button(
+                    "📥 다운로드", buffer,
+                    file_name=f"투자성과보고서_{target_year}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True, key="dl_dashboard_btn"
+                )
+                st.caption("💡 엑셀에서 열면 대시보드 → 종목명 클릭 시 해당 종목 시트로 이동합니다.")
+            except Exception as e:
+                st.error(f"❌ 생성 실패: {e}")
+                st.exception(e)
+    
+    st.markdown("---")
+    st.markdown("#### 그 외 형식")
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("#### 📊 통합 분석 엑셀")
-        if st.button("⬇️ 엑셀 생성", use_container_width=True, type="primary"):
+        st.markdown("##### 📊 단순 통합 엑셀")
+        st.caption("종목손익/거래내역만 표 형태로")
+        if st.button("⬇️ 생성", use_container_width=True, key="dl_simple"):
             with st.spinner("엑셀 생성 중..."):
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
@@ -705,14 +879,16 @@ with tab6:
                     "📥 다운로드", buffer,
                     file_name=f"통합분석_{datetime.now().strftime('%Y%m%d')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
+                    use_container_width=True, key="dl_simple_btn"
                 )
     with col2:
-        st.markdown("#### 🏛 홈택스 양식")
-        st.button("⬇️ 홈택스 양식 (개발 예정)", disabled=True, use_container_width=True, key="dl_hometax")
+        st.markdown("##### 🏛 홈택스 양식")
+        st.caption("해외주식 양도세 23컬럼")
+        st.button("⬇️ 개발 예정", disabled=True, use_container_width=True, key="dl_hometax")
     with col3:
-        st.markdown("#### 📄 PDF 신고 자료")
-        st.button("⬇️ PDF 신고서 (개발 예정)", disabled=True, use_container_width=True, key="dl_pdf")
+        st.markdown("##### 📄 PDF 신고 자료")
+        st.caption("세무사 전달용 요약")
+        st.button("⬇️ 개발 예정", disabled=True, use_container_width=True, key="dl_pdf")
 
 
 st.divider()

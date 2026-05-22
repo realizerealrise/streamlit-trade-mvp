@@ -19,6 +19,7 @@ from .price_fetcher import (
     isin_to_ticker,
     ISIN_TO_TICKER,
 )
+from .excel_dashboard import build_dashboard_workbook
 
 __all__ = [
     'calculate_stock_pnl',
@@ -37,4 +38,5 @@ __all__ = [
     'fetch_overseas_price',
     'isin_to_ticker',
     'ISIN_TO_TICKER',
+    'build_dashboard_workbook',
 ]
