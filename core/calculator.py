@@ -15,11 +15,18 @@ def calculate_stock_pnl(trades, opening_balance=None):
     Returns:
         DataFrame: 종목별 손익 현황
     """
-    opening_map = {}
+    # opening_balance 매칭용 인덱스 만들기 (종목코드 키 + 종목명 키 둘 다)
+    opening_by_code = {}  # (통화, 종목코드) → ob
+    opening_by_name = {}  # (통화, 종목명) → ob
     if opening_balance:
         for ob in opening_balance:
-            key = (ob['통화'], ob['종목코드'])
-            opening_map[key] = ob
+            currency = ob.get('통화', 'KRW')
+            code = ob.get('종목코드', '')
+            name = ob.get('종목명', '')
+            if code:
+                opening_by_code[(currency, code)] = ob
+            if name:
+                opening_by_name[(currency, name)] = ob
     
     # 종목별 집계
     stocks = defaultdict(lambda: {
@@ -39,12 +46,16 @@ def calculate_stock_pnl(trades, opening_balance=None):
             s['종목코드'] = t['종목코드']
             s['통화'] = t['통화']
             s['증권사'] = t['증권사']
-            # 기초잔고 매칭
-            if key in opening_map:
-                ob = opening_map[key]
+            # 기초잔고 매칭 (종목코드 우선, 그 다음 종목명)
+            ob = None
+            if t['종목코드']:
+                ob = opening_by_code.get((t['통화'], t['종목코드']))
+            if ob is None and t['종목명']:
+                ob = opening_by_name.get((t['통화'], t['종목명']))
+            if ob:
                 s['기초수량'] = ob.get('수량', 0)
                 s['기초단가'] = ob.get('평균단가', 0)
-                s['기초금액'] = ob.get('원화금액', 0)
+                s['기초금액'] = ob.get('원화금액', 0) or (ob.get('수량', 0) * ob.get('평균단가', 0))
         
         if t['거래구분'] == '매수':
             s['매수횟수'] += 1
@@ -130,11 +141,18 @@ def calculate_stock_pnl_moving_avg(trades, opening_balance=None):
     Returns:
         DataFrame: 종목별 손익 현황 (총평균법과 동일 컬럼 구조)
     """
-    opening_map = {}
+    # opening_balance 매칭용 인덱스 (종목코드 + 종목명)
+    opening_by_code = {}
+    opening_by_name = {}
     if opening_balance:
         for ob in opening_balance:
-            key = (ob['통화'], ob['종목코드'])
-            opening_map[key] = ob
+            currency = ob.get('통화', 'KRW')
+            code = ob.get('종목코드', '')
+            name = ob.get('종목명', '')
+            if code:
+                opening_by_code[(currency, code)] = ob
+            if name:
+                opening_by_name[(currency, name)] = ob
     
     # 종목별로 시간순 처리 — 매수 시 평균단가 갱신, 매도 시 평균단가로 손익 산정
     # 1단계: 거래를 시간순 정렬
@@ -147,7 +165,7 @@ def calculate_stock_pnl_moving_avg(trades, opening_balance=None):
     stocks = defaultdict(lambda: {
         '종목명': '', '종목코드': '', '통화': '', '증권사': '',
         '보유수량': 0,
-        '평균단가_원화': 0,       # 이동평균 (원화 기준, 부대비용 포함)
+        '평균단가_원화': 0,
         '매수횟수': 0,
         '매수수량': 0, '매수금액_원화': 0, '매수부대비용': 0,
         '매도횟수': 0,
@@ -163,9 +181,13 @@ def calculate_stock_pnl_moving_avg(trades, opening_balance=None):
             s['종목코드'] = t['종목코드']
             s['통화'] = t['통화']
             s['증권사'] = t['증권사']
-            # 기초잔고 매칭
-            if key in opening_map:
-                ob = opening_map[key]
+            # 기초잔고 매칭 (종목코드 우선, 그 다음 종목명)
+            ob = None
+            if t['종목코드']:
+                ob = opening_by_code.get((t['통화'], t['종목코드']))
+            if ob is None and t['종목명']:
+                ob = opening_by_name.get((t['통화'], t['종목명']))
+            if ob:
                 s['보유수량'] = ob.get('수량', 0)
                 s['평균단가_원화'] = ob.get('평균단가', 0) if ob.get('수량', 0) > 0 else 0
         
@@ -247,27 +269,25 @@ def calculate_stock_pnl_moving_avg(trades, opening_balance=None):
     return df
 
 
-def compare_tax_methods(trades, user_type='개인', loss_carryforward=0):
+def compare_tax_methods(trades, user_type='개인', loss_carryforward=0, opening_balance=None):
     """
     총평균법 vs 이동평균법 비교
     
-    국세청 신고 시 사용자가 자유 선택 가능한 두 가지 방법을 모두 계산하여
-    더 유리한 방법을 추천.
+    Args:
+        trades: 거래 리스트
+        user_type: '개인' or '사업자'
+        loss_carryforward: 이월결손금
+        opening_balance: 기초잔고 리스트 (optional)
     
     Returns:
-        dict: {
-            '총평균법': {pnl_df, tax_info, 방법명, 설명},
-            '이동평균법': {pnl_df, tax_info, 방법명, 설명},
-            '추천': '총평균법' or '이동평균법',
-            '절세효과': int (유리한 방법 선택 시 절세 금액),
-        }
+        dict: 두 방법 비교 + 추천 + 절세효과
     """
     # 총평균법
-    pnl_avg = calculate_stock_pnl(trades)
+    pnl_avg = calculate_stock_pnl(trades, opening_balance=opening_balance)
     tax_avg = calculate_tax(pnl_avg, user_type, loss_carryforward)
     
     # 이동평균법
-    pnl_moving = calculate_stock_pnl_moving_avg(trades)
+    pnl_moving = calculate_stock_pnl_moving_avg(trades, opening_balance=opening_balance)
     tax_moving = calculate_tax(pnl_moving, user_type, loss_carryforward)
     
     # 세금 비교

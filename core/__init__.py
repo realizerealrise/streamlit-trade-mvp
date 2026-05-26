@@ -22,6 +22,12 @@ from .price_fetcher import (
     ISIN_TO_TICKER,
 )
 from .excel_dashboard import build_dashboard_workbook
+from .opening_balance import (
+    build_opening_balance_template,
+    parse_opening_balance_excel,
+    dataframe_to_opening_balance,
+    get_empty_template_df,
+)
 
 __all__ = [
     'calculate_stock_pnl',
@@ -43,4 +49,8 @@ __all__ = [
     'isin_to_ticker',
     'ISIN_TO_TICKER',
     'build_dashboard_workbook',
+    'build_opening_balance_template',
+    'parse_opening_balance_excel',
+    'dataframe_to_opening_balance',
+    'get_empty_template_df',
 ]

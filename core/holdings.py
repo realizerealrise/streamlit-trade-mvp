@@ -3,26 +3,53 @@ import pandas as pd
 from collections import defaultdict
 
 
-def get_current_holdings(trades):
+def get_current_holdings(trades, opening_balance=None):
     """
     거래 내역에서 현재 보유 중인 종목 추출
     
     Args:
         trades: list of dict (통합 거래 내역)
+        opening_balance: list of dict (기초잔고, optional)
     
     Returns:
         DataFrame: 보유 종목 정보
-            - 종목명, 종목코드, 통화, 증권사
-            - 보유수량, 평균매수가(원통화), 평균매수가(원)
-            - 매수원가(원)
     """
+    # opening_balance 매칭용 인덱스
+    opening_by_code = {}
+    opening_by_name = {}
+    if opening_balance:
+        for ob in opening_balance:
+            currency = ob.get('통화', 'KRW')
+            code = ob.get('종목코드', '')
+            name = ob.get('종목명', '')
+            if code:
+                opening_by_code[(currency, code)] = ob
+            if name:
+                opening_by_name[(currency, name)] = ob
+    
     stocks = defaultdict(lambda: {
         '종목명': '', '종목코드': '', '통화': '', '증권사': '',
         '매수수량': 0.0,
         '매수금액_원통화': 0.0,
         '매수금액_원': 0.0,
         '매도수량': 0.0,
+        '기초수량': 0.0,
+        '기초금액': 0.0,
     })
+    
+    # 기초잔고를 stocks에 먼저 채우기
+    if opening_balance:
+        for ob in opening_balance:
+            currency = ob.get('통화', 'KRW')
+            code = ob.get('종목코드', '')
+            name = ob.get('종목명', '')
+            key = (currency, code or name)
+            s = stocks[key]
+            s['종목명'] = name
+            s['종목코드'] = code
+            s['통화'] = currency
+            s['기초수량'] = ob.get('수량', 0)
+            s['기초금액'] = ob.get('원화금액', 0) or (ob.get('수량', 0) * ob.get('평균단가', 0))
     
     for t in trades:
         if t['거래구분'] not in ('매수', '매도'):
@@ -36,6 +63,17 @@ def get_current_holdings(trades):
             s['종목코드'] = t['종목코드']
             s['통화'] = t['통화']
             s['증권사'] = t['증권사']
+            # 기초잔고 매칭 (종목코드 우선, 그 다음 종목명)
+            ob = None
+            if t['종목코드']:
+                ob = opening_by_code.get((t['통화'], t['종목코드']))
+            if ob is None and t['종목명']:
+                ob = opening_by_name.get((t['통화'], t['종목명']))
+            if ob:
+                s['기초수량'] = ob.get('수량', 0)
+                s['기초금액'] = ob.get('원화금액', 0) or (ob.get('수량', 0) * ob.get('평균단가', 0))
+        elif not s['증권사']:
+            s['증권사'] = t['증권사']
         
         if t['거래구분'] == '매수':
             s['매수수량'] += t['수량']
@@ -46,17 +84,21 @@ def get_current_holdings(trades):
     
     rows = []
     for key, s in stocks.items():
-        remain_qty = s['매수수량'] - s['매도수량']
+        # 보유수량 = 기초수량 + 매수수량 - 매도수량
+        total_owned = s['기초수량'] + s['매수수량']
+        remain_qty = total_owned - s['매도수량']
         # 작은 잔량 오차 (소수점 8자리 미만) 무시
         if abs(remain_qty) < 1e-8:
             continue
         if remain_qty <= 0:
             continue
         
-        # 평균매수가
-        if s['매수수량'] > 0:
-            avg_price_local = s['매수금액_원통화'] / s['매수수량']
-            avg_price_krw = s['매수금액_원'] / s['매수수량']
+        # 평균매수가 — 기초잔고 포함
+        if total_owned > 0:
+            total_cost_local = s['매수금액_원통화']  # 기초는 원화 기준만 추적
+            total_cost_krw = s['매수금액_원'] + s['기초금액']
+            avg_price_local = total_cost_local / s['매수수량'] if s['매수수량'] > 0 else 0
+            avg_price_krw = total_cost_krw / total_owned
         else:
             avg_price_local = 0
             avg_price_krw = 0

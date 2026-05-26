@@ -30,17 +30,22 @@ from core import (
     isin_to_ticker,
     ISIN_TO_TICKER,
     build_dashboard_workbook,
+    build_opening_balance_template,
+    parse_opening_balance_excel,
+    dataframe_to_opening_balance,
+    get_empty_template_df,
 )
 
 st.set_page_config(
     page_title="멀티 증권사 거래 분석",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",  # 모바일은 자동 접힘, 데스크탑은 펼침
 )
 
 st.markdown("""
 <style>
+    /* ─────────── 기본 (데스크탑) ─────────── */
     .main {padding-top: 1rem;}
     .stMetric {background-color: #f8f9fa; padding: 1rem; border-radius: 0.5rem; border-left: 4px solid #4472C4;}
     .stMetric label {font-weight: 600 !important;}
@@ -49,6 +54,112 @@ st.markdown("""
     .stTabs [data-baseweb="tab-list"] {gap: 8px;}
     .stTabs [data-baseweb="tab"] {height: 50px; padding: 0 24px; background-color: #F2F2F2;}
     .stTabs [aria-selected="true"] {background-color: #4472C4; color: white;}
+    
+    /* ─────────── 모바일 (768px 이하) ─────────── */
+    @media (max-width: 768px) {
+        /* 메인 영역 패딩 최소화 */
+        .main .block-container {
+            padding-top: 0.5rem !important;
+            padding-left: 0.5rem !important;
+            padding-right: 0.5rem !important;
+            padding-bottom: 1rem !important;
+            max-width: 100% !important;
+        }
+        
+        /* 제목 크기 축소 */
+        h1 {font-size: 1.4rem !important; margin-top: 0.3rem !important;}
+        h2 {font-size: 1.15rem !important; padding-bottom: 0.2rem !important;}
+        h3 {font-size: 1.05rem !important;}
+        
+        /* 본문 폰트 약간 크게 (가독성) */
+        .stMarkdown, .stText, p {font-size: 0.95rem !important; line-height: 1.5 !important;}
+        
+        /* 캡션 크기 */
+        .stCaption, [data-testid="stCaption"] {font-size: 0.78rem !important;}
+        
+        /* 탭 — 모바일에선 작은 글씨 + 가로 스크롤 가능 */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 4px !important;
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch;
+            flex-wrap: nowrap !important;
+        }
+        .stTabs [data-baseweb="tab"] {
+            height: 40px !important;
+            padding: 0 12px !important;
+            font-size: 0.85rem !important;
+            white-space: nowrap !important;
+            min-width: auto !important;
+        }
+        
+        /* 메트릭 카드 — 모바일에선 더 작게 */
+        .stMetric {padding: 0.6rem !important; border-radius: 0.4rem !important;}
+        [data-testid="stMetricValue"] {font-size: 1.1rem !important;}
+        [data-testid="stMetricLabel"] {font-size: 0.8rem !important;}
+        
+        /* 컬럼 자동 세로 스택 — Streamlit 1.32+ 기본 지원이지만 명시적으로 */
+        [data-testid="column"] {
+            min-width: 100% !important;
+            flex: 1 1 100% !important;
+        }
+        
+        /* 표 — 가로 스크롤 명확히 */
+        [data-testid="stDataFrame"], [data-testid="stTable"] {
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        /* 사이드바 — 모바일에서 펼쳐졌을 때 너비 */
+        section[data-testid="stSidebar"] {
+            width: 85vw !important;
+            min-width: 280px !important;
+        }
+        
+        /* 버튼 더 크게 (터치 친화) */
+        .stButton button, .stDownloadButton button {
+            min-height: 44px !important;
+            font-size: 0.95rem !important;
+        }
+        
+        /* file_uploader 영역 */
+        [data-testid="stFileUploader"] {
+            margin-bottom: 0.5rem !important;
+        }
+        [data-testid="stFileUploader"] section {
+            padding: 0.6rem !important;
+        }
+        
+        /* expander */
+        .streamlit-expanderHeader {
+            font-size: 0.9rem !important;
+            padding: 0.4rem 0.6rem !important;
+        }
+        
+        /* 정보 박스 (st.info, st.success 등) */
+        .stAlert {
+            padding: 0.6rem !important;
+            font-size: 0.85rem !important;
+        }
+        
+        /* 입력 위젯 */
+        .stTextInput input, .stNumberInput input, .stSelectbox select {
+            font-size: 16px !important;  /* 16px 미만이면 iOS에서 줌인됨 */
+        }
+        
+        /* Plotly 차트 - 모바일 대응 */
+        .js-plotly-plot {max-width: 100% !important;}
+    }
+    
+    /* ─────────── 작은 모바일 (480px 이하) ─────────── */
+    @media (max-width: 480px) {
+        h1 {font-size: 1.2rem !important;}
+        h2 {font-size: 1.05rem !important;}
+        [data-testid="stMetricValue"] {font-size: 1rem !important;}
+        .stTabs [data-baseweb="tab"] {
+            padding: 0 8px !important;
+            font-size: 0.78rem !important;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -79,6 +190,109 @@ with st.sidebar:
     ibk_files = st.file_uploader("🟪 IBK(산업)증권 xls/xlsx", type=['xls', 'xlsx'],
                                   accept_multiple_files=True,
                                   help="IBK증권 거래내역. xls 인식 불가 시 Excel로 한 번 열어 xlsx로 저장 후 올려주세요.")
+    
+    # ─────────────────────────────────────────
+    # 📋 기초잔고 입력 (3가지 옵션)
+    # ─────────────────────────────────────────
+    st.divider()
+    st.subheader("📋 기초잔고 (선택)")
+    st.caption("이전 연도 보유 종목의 매수원가를 입력하면 양도세 계산이 정확해집니다.")
+    
+    # 세션 스테이트 초기화
+    if 'opening_balance_list' not in st.session_state:
+        st.session_state.opening_balance_list = []
+    
+    with st.expander("📋 기초잔고 입력 방법 선택", expanded=False):
+        st.markdown("##### 옵션 A · 엑셀 업로드 (추천)")
+        col_t, col_u = st.columns([1, 1])
+        with col_t:
+            template_buf = build_opening_balance_template()
+            st.download_button(
+                "📥 템플릿 받기",
+                template_buf,
+                file_name="기초잔고_템플릿.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key="dl_open_template",
+            )
+        with col_u:
+            ob_file = st.file_uploader(
+                "📤 기초잔고",
+                type=['xlsx'],
+                accept_multiple_files=False,
+                label_visibility="collapsed",
+                key="ob_excel_upload",
+            )
+        
+        if ob_file:
+            try:
+                ob_list = parse_opening_balance_excel(ob_file)
+                st.session_state.opening_balance_list = ob_list
+                st.success(f"✅ 기초잔고 {len(ob_list)}건 인식")
+            except Exception as e:
+                st.error(f"❌ 인식 실패: {e}")
+        
+        st.markdown("---")
+        st.markdown("##### 옵션 B · 직접 입력")
+        st.caption("종목 수가 적을 때 편리합니다")
+        
+        if 'opening_balance_df' not in st.session_state:
+            st.session_state.opening_balance_df = get_empty_template_df()
+        
+        edited_df = st.data_editor(
+            st.session_state.opening_balance_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "종목코드": st.column_config.TextColumn("코드", help="국내 6자리 / 해외 ISIN", width="small"),
+                "종목명": st.column_config.TextColumn("종목명", required=False, width="medium"),
+                "통화": st.column_config.SelectboxColumn(
+                    "통화", options=["KRW", "USD", "JPY", "HKD", "CNY"], default="KRW", width="small",
+                ),
+                "보유수량": st.column_config.NumberColumn("수량", format="%g", min_value=0),
+                "평균매수단가(원화)": st.column_config.NumberColumn("평단(원)", format="%d", min_value=0),
+            },
+            key="ob_editor",
+        )
+        
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("✅ 직접 입력 적용", use_container_width=True, key="ob_apply"):
+                from_table = dataframe_to_opening_balance(edited_df)
+                if from_table:
+                    st.session_state.opening_balance_list = from_table
+                    st.success(f"✅ {len(from_table)}건 적용")
+                else:
+                    st.warning("⚠️ 입력된 종목이 없습니다")
+        with col_b:
+            if st.button("🗑 비우기", use_container_width=True, key="ob_clear"):
+                st.session_state.opening_balance_list = []
+                st.session_state.opening_balance_df = get_empty_template_df()
+                st.success("기초잔고 비움")
+        
+        st.markdown("---")
+        st.markdown("##### 옵션 C · 이전 거래내역 활용")
+        st.info(
+            "📁 이전 연도 거래내역 PDF/엑셀을 위 거래내역 업로드 칸에 **함께** 업로드하시면,  "
+            "**기초잔고 입력 없이도** 자동으로 매수원가가 계산됩니다 (가장 정확).\n\n"
+            "예: 2024 + 2025 거래내역 동시 업로드 → 2025년 매도분의 매수원가 자동 매칭"
+        )
+    
+    # 적용된 기초잔고 요약
+    if st.session_state.opening_balance_list:
+        ob_count = len(st.session_state.opening_balance_list)
+        ob_total = sum(o.get('원화금액', 0) for o in st.session_state.opening_balance_list)
+        st.success(f"✅ 기초잔고: **{ob_count}개 종목, ₩{ob_total:,.0f}**")
+        with st.expander(f"📊 기초잔고 상세 ({ob_count}개)", expanded=False):
+            ob_df = pd.DataFrame(st.session_state.opening_balance_list)
+            st.dataframe(
+                ob_df.style.format({
+                    '수량': '{:,.4g}',
+                    '평균단가': '{:,.0f}',
+                    '원화금액': '₩{:,.0f}',
+                }),
+                hide_index=True, use_container_width=True,
+            )
     
     st.divider()
     st.subheader("👤 신고자 정보")
@@ -222,12 +436,15 @@ trades_df = pd.DataFrame(all_trades)
 trades_df['거래일자'] = pd.to_datetime(trades_df['거래일자'], errors='coerce')
 trades_df = trades_df.sort_values('거래일자').reset_index(drop=True)
 
-pnl_df = calculate_stock_pnl(all_trades)
+# 기초잔고 가져오기 (세션 스테이트)
+opening_balance = st.session_state.get('opening_balance_list', []) or None
+
+pnl_df = calculate_stock_pnl(all_trades, opening_balance=opening_balance)
 div_info = calculate_dividend(all_trades)
 tax_info = calculate_tax(pnl_df, user_type, loss_carryforward)
 allocation = get_allocation(pnl_df)
 monthly = get_monthly_trends(all_trades)
-holdings_df = get_current_holdings(all_trades)
+holdings_df = get_current_holdings(all_trades, opening_balance=opening_balance)
 div_check = check_dividend_threshold(all_trades)
 
 if 'current_prices' not in st.session_state:
@@ -662,7 +879,12 @@ with tab_tax:
                 )
                 
                 with st.spinner("두 가지 방법 계산 중..."):
-                    comparison = compare_tax_methods(all_trades, user_type=user_type, loss_carryforward=loss_carryforward)
+                    comparison = compare_tax_methods(
+                        all_trades, 
+                        user_type=user_type, 
+                        loss_carryforward=loss_carryforward,
+                        opening_balance=opening_balance,
+                    )
                 
                 tax_avg = comparison['총평균법']['tax_info']
                 tax_mov = comparison['이동평균법']['tax_info']
@@ -1011,8 +1233,8 @@ with tab6:
                 # 해당 연도 거래만 필터
                 year_trades = [t for t in all_trades 
                               if t.get('거래일자', '').startswith(str(target_year))]
-                year_pnl = calculate_stock_pnl(year_trades)
-                year_holdings = get_current_holdings(year_trades)
+                year_pnl = calculate_stock_pnl(year_trades, opening_balance=opening_balance)
+                year_holdings = get_current_holdings(year_trades, opening_balance=opening_balance)
                 
                 # 현재가 적용 (입력된 경우)
                 if 'current_prices' in st.session_state and st.session_state.current_prices:
