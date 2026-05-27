@@ -1,7 +1,10 @@
 from .calculator import (
     calculate_stock_pnl,
     calculate_stock_pnl_moving_avg,
+    calculate_stock_pnl_fifo,
     compare_tax_methods,
+    get_broker_method,
+    BROKER_METHOD_MAP,
     calculate_dividend,
     calculate_tax,
     get_monthly_trends,
@@ -32,7 +35,10 @@ from .opening_balance import (
 __all__ = [
     'calculate_stock_pnl',
     'calculate_stock_pnl_moving_avg',
+    'calculate_stock_pnl_fifo',
     'compare_tax_methods',
+    'get_broker_method',
+    'BROKER_METHOD_MAP',
     'calculate_dividend',
     'calculate_tax',
     'get_monthly_trends',

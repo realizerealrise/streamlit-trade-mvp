@@ -867,18 +867,18 @@ with tab_tax:
                     )
             
             # ─────────────────────────────────────────
-            # 🪜 Step 4. 계산 방법 비교 — 총평균법 vs 이동평균법
+            # 🪜 Step 4. 계산 방법 비교 — 선입선출법 vs 이동평균법
             # ─────────────────────────────────────────
             if user_type == '개인':
                 st.markdown("---")
                 st.markdown("##### `Step 4 · 계산 방법 비교`")
-                st.markdown("### ⚖️ 총평균법 vs 이동평균법")
+                st.markdown("### ⚖️ 선입선출법 (FIFO) vs 이동평균법")
                 st.caption(
-                    "국세청 해외주식 양도소득세 신고 시 **두 가지 계산 방법** 중 자유 선택 가능합니다. "
-                    "같은 거래라도 방법에 따라 세금이 달라질 수 있어요."
+                    "국세청 인정 양도세 계산 방법은 **선입선출법(원칙)**과 **이동평균법(증권사 제공 시 가능)** 두 가지입니다. "
+                    "다만 **본인이 거래한 증권사가 어떤 방법을 채택했는지에 따라 신고 방식이 달라집니다.**"
                 )
                 
-                with st.spinner("두 가지 방법 계산 중..."):
+                with st.spinner("계산 중..."):
                     comparison = compare_tax_methods(
                         all_trades, 
                         user_type=user_type, 
@@ -886,8 +886,9 @@ with tab_tax:
                         opening_balance=opening_balance,
                     )
                 
-                tax_avg = comparison['총평균법']['tax_info']
+                tax_fifo = comparison['선입선출법']['tax_info']
                 tax_mov = comparison['이동평균법']['tax_info']
+                tax_avg = comparison['총평균법']['tax_info']  # 참고용
                 recommended = comparison['추천']
                 saving = comparison['절세효과']
                 
@@ -895,7 +896,7 @@ with tab_tax:
                 col_a, col_b = st.columns(2)
                 
                 with col_a:
-                    is_recommended = (recommended == '총평균법')
+                    is_recommended = (recommended == '선입선출법')
                     border_color = '#3B6D11' if is_recommended else '#CCCCCC'
                     bg_color = '#EAF3DE' if is_recommended else '#FAFAFA'
                     badge = ('<span style="position:absolute; top:-12px; right:12px; background:#3B6D11; '
@@ -904,14 +905,14 @@ with tab_tax:
                     st.markdown(f"""
                     <div style="background:{bg_color}; border:2px solid {border_color}; border-radius:12px; padding:16px 20px; position:relative; margin-top:12px;">
                       {badge}
-                      <div style="font-size:14px; font-weight:500; margin-bottom:8px;">📊 총평균법</div>
-                      <div style="font-size:11px; color:#666; margin-bottom:12px;">연간 전체 매수의 평균단가로 산정</div>
+                      <div style="font-size:14px; font-weight:500; margin-bottom:8px;">📊 선입선출법 (FIFO)</div>
+                      <div style="font-size:11px; color:#666; margin-bottom:12px;">먼저 매수한 주식을 먼저 매도 처리 · 국세청 원칙</div>
                       <table style="width:100%; font-size:12px;">
-                        <tr><td style="color:#666; padding:3px 0;">처분이익</td><td style="text-align:right;">₩{tax_avg['처분이익']:+,.0f}</td></tr>
-                        <tr><td style="color:#666; padding:3px 0;">처분손실</td><td style="text-align:right;">₩{tax_avg['처분손실']:+,.0f}</td></tr>
-                        <tr><td style="color:#666; padding:3px 0;">순처분손익</td><td style="text-align:right;">₩{tax_avg['순처분손익']:+,.0f}</td></tr>
-                        <tr><td style="color:#666; padding:3px 0;">과세표준</td><td style="text-align:right;">₩{tax_avg['과세표준']:+,.0f}</td></tr>
-                        <tr style="border-top:0.5px solid #ccc;"><td style="padding:6px 0 0; font-weight:500;">예상 세금</td><td style="text-align:right; padding:6px 0 0; font-weight:500; font-size:14px;">₩{tax_avg['예상세액']:,}</td></tr>
+                        <tr><td style="color:#666; padding:3px 0;">처분이익</td><td style="text-align:right;">₩{tax_fifo['처분이익']:+,.0f}</td></tr>
+                        <tr><td style="color:#666; padding:3px 0;">처분손실</td><td style="text-align:right;">₩{tax_fifo['처분손실']:+,.0f}</td></tr>
+                        <tr><td style="color:#666; padding:3px 0;">순처분손익</td><td style="text-align:right;">₩{tax_fifo['순처분손익']:+,.0f}</td></tr>
+                        <tr><td style="color:#666; padding:3px 0;">과세표준</td><td style="text-align:right;">₩{tax_fifo['과세표준']:+,.0f}</td></tr>
+                        <tr style="border-top:0.5px solid #ccc;"><td style="padding:6px 0 0; font-weight:500;">예상 세금</td><td style="text-align:right; padding:6px 0 0; font-weight:500; font-size:14px;">₩{tax_fifo['예상세액']:,}</td></tr>
                       </table>
                     </div>
                     """, unsafe_allow_html=True)
@@ -926,7 +927,7 @@ with tab_tax:
                     st.markdown(f"""
                     <div style="background:{bg_color}; border:2px solid {border_color}; border-radius:12px; padding:16px 20px; position:relative; margin-top:12px;">
                       {badge}
-                      <div style="font-size:14px; font-weight:500; margin-bottom:8px;">📈 이동평균법</div>
+                      <div style="font-size:14px; font-weight:500; margin-bottom:8px;">📈 이동평균법 (Moving Avg)</div>
                       <div style="font-size:11px; color:#666; margin-bottom:12px;">매수 시점마다 평균단가 갱신</div>
                       <table style="width:100%; font-size:12px;">
                         <tr><td style="color:#666; padding:3px 0;">처분이익</td><td style="text-align:right;">₩{tax_mov['처분이익']:+,.0f}</td></tr>
@@ -947,26 +948,94 @@ with tab_tax:
                     )
                 else:
                     st.info(
-                        f"### ℹ️ 두 방법의 세액이 동일 ({recommended} 적용 시 ₩{tax_avg['예상세액']:,})"
+                        f"### ℹ️ 두 방법의 세액이 동일 ({recommended} 적용 시 ₩{tax_fifo['예상세액']:,})"
                     )
                 
+                # ⭐ 증권사별 권장 방법 표 (이미지 그대로)
+                st.markdown("---")
+                st.markdown("#### 🏢 [해외주식 양도세] 주요 증권사별 산정 방식")
+                st.caption("출처: 대한경제 2025-12-23 / 시사저널e 2025-01-30 / 국세청 유권해석 2022-국제세원-0764")
+                
+                col_fifo, col_mov, col_choice = st.columns(3)
+                
+                with col_fifo:
+                    st.markdown("""
+                    <div style="background:#1E3A5F; color:white; border-radius:12px; padding:16px; min-height:280px;">
+                      <div style="font-size:14px; font-weight:500; margin-bottom:4px;">✅ 선입선출법</div>
+                      <div style="font-size:11px; color:#A8C5E8; margin-bottom:12px;">(FIFO)</div>
+                      <div style="font-size:13px; line-height:1.8;">
+                        • KB증권<br>
+                        • 미래에셋증권<br>
+                        • 키움증권<br>
+                        • 하나증권<br>
+                        • 신한투자증권<br>
+                        • 메리츠증권<br>
+                        • 카카오페이증권
+                      </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col_mov:
+                    st.markdown("""
+                    <div style="background:#1E3A5F; color:white; border-radius:12px; padding:16px; min-height:280px;">
+                      <div style="font-size:14px; font-weight:500; margin-bottom:4px;">✅ 이동평균법</div>
+                      <div style="font-size:11px; color:#A8C5E8; margin-bottom:12px;">(Moving Average)</div>
+                      <div style="font-size:13px; line-height:1.8;">
+                        • 한국투자증권<br>
+                        • 토스증권<br>
+                        • 삼성증권<br>
+                        • 대신증권<br>
+                        • SK증권
+                      </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col_choice:
+                    st.markdown("""
+                    <div style="background:#B8860B; color:white; border-radius:12px; padding:16px; min-height:280px;">
+                      <div style="font-size:14px; font-weight:500; margin-bottom:4px;">✅ 방식 선택 가능</div>
+                      <div style="font-size:11px; color:#FFE4B5; margin-bottom:12px;">(Choosable)</div>
+                      <div style="font-size:13px; line-height:1.8;">
+                        • NH투자증권<br>
+                        • 신한투자증권<br>
+                        &nbsp;&nbsp;<span style="font-size:11px; color:#FFE4B5;">(2027년 신고분부터)</span>
+                      </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.caption("⚠️ 증권사 사정에 따라 기준이 변경될 수 있으니 반드시 확인하시기 바랍니다.")
+                
+                # 사용된 증권사 매핑 안내
+                if comparison.get('증권사별_방법'):
+                    st.markdown("##### 📍 업로드한 거래의 증권사")
+                    broker_msg_list = []
+                    for bm in comparison['증권사별_방법']:
+                        method = bm['권장방법']
+                        icon = {
+                            'FIFO': '📊 선입선출법',
+                            '이동평균법': '📈 이동평균법',
+                            '선택가능': '🔀 선택 가능',
+                            '확인 필요': '❓ 확인 필요',
+                        }.get(method, '❓ 확인 필요')
+                        broker_msg_list.append(f"**{bm['증권사']}**: {icon}")
+                    st.info("  ·  ".join(broker_msg_list))
+                
                 # 종목별 차이 (큰 차이 종목만)
-                df_avg = comparison['총평균법']['pnl_df']
+                df_fifo = comparison['선입선출법']['pnl_df']
                 df_mov = comparison['이동평균법']['pnl_df']
-                if not df_avg.empty and not df_mov.empty:
-                    diff_table = df_avg[['종목명', '처분손익(원)']].merge(
-                        df_mov[['종목명', '처분손익(원)']], on='종목명', suffixes=('_총평균', '_이동평균')
+                if not df_fifo.empty and not df_mov.empty:
+                    diff_table = df_fifo[['종목명', '처분손익(원)']].merge(
+                        df_mov[['종목명', '처분손익(원)']], on='종목명', suffixes=('_FIFO', '_이동평균')
                     )
-                    diff_table['차이'] = diff_table['처분손익(원)_이동평균'] - diff_table['처분손익(원)_총평균']
-                    # 차이가 의미 있는 종목만 (₩100 초과)
+                    diff_table['차이'] = diff_table['처분손익(원)_이동평균'] - diff_table['처분손익(원)_FIFO']
                     significant = diff_table[diff_table['차이'].abs() > 100].sort_values('차이', key=abs, ascending=False)
                     
                     if not significant.empty:
                         with st.expander(f"📋 종목별 손익 차이 보기 ({len(significant)}개 종목)", expanded=False):
-                            st.caption("두 방법 모두 같은 거래를 다르게 평가합니다. 차이 큰 종목 = 매수/매도가 시간 차이로 섞인 종목.")
+                            st.caption("같은 거래라도 두 방법이 다르게 평가합니다. 차이 큰 종목 = 매수/매도가 시간차로 섞인 종목.")
                             st.dataframe(
                                 significant.style.format({
-                                    '처분손익(원)_총평균': '₩{:+,.0f}',
+                                    '처분손익(원)_FIFO': '₩{:+,.0f}',
                                     '처분손익(원)_이동평균': '₩{:+,.0f}',
                                     '차이': '₩{:+,.0f}',
                                 }).map(
@@ -978,13 +1047,29 @@ with tab_tax:
                                 hide_index=True, use_container_width=True,
                             )
                 
+                # 참고용: 총평균법 (학술적 비교)
+                with st.expander("🔍 (참고) 총평균법 계산 결과", expanded=False):
+                    st.caption(
+                        "⚠️ **총평균법은 국세청 실무 신고에 사용되지 않습니다.** "
+                        "학술적 또는 사내 분석용으로만 참고하세요."
+                    )
+                    st.markdown(f"""
+                    | 항목 | 금액 |
+                    |---|---:|
+                    | 처분이익 | ₩{tax_avg['처분이익']:+,.0f} |
+                    | 처분손실 | ₩{tax_avg['처분손실']:+,.0f} |
+                    | 순처분손익 | ₩{tax_avg['순처분손익']:+,.0f} |
+                    | 과세표준 | ₩{tax_avg['과세표준']:+,.0f} |
+                    | **예상 세금** | **₩{tax_avg['예상세액']:,}** |
+                    """)
+                
                 # 안내
                 st.info("""
-                💡 **계산 방법 선택 안내**
-                - **총평균법**: 매수/매도가 비슷한 가격대에 있을 때 유리 (계산 간단)
-                - **이동평균법**: 가격 변동성이 크고 분할 매도가 많을 때 차이 발생
-                - **국세청 신고 시 선택**: 자유 선택 가능하나, 첫 신고 후 일관 적용 권장
-                - **시뮬레이션 신뢰도**: 두 방법 모두 사장님이 업로드한 거래내역 기준 자동 계산
+                💡 **계산 방법 선택 가이드 (이룡권 세무사 정리)**
+                - **선입선출법**: 국세청 원칙 (소득세법 시행령 §162⑤). 매수 가격이 상승 추세일 때 세금 ↑
+                - **이동평균법**: 증권사가 제공할 때 사용 가능 (국세청 유권해석 2022). 분할 매수/매도 많을 때 평탄화 효과
+                - **신고 실무**: 본인 증권사가 제공하는 자료의 계산 방식대로 신고하는 것이 가장 안전
+                - **두 방법 다 제공하는 NH증권**: 더 유리한 쪽 선택 가능
                 """)
     
     if user_type == '사업자' and loss_carryforward > 0:
